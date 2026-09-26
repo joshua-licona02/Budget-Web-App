@@ -57,45 +57,164 @@
     APP.controller.commit();
   };
 
+  // View state that survives the re-render after every edit: search text, filter, which
+  // groups are collapsed, and which input should get focus back.
+  APP.pages.budget.view = {
+    query: "",
+    filter: "all",
+    collapsed: {},
+    focusKey: ""
+  };
+
+  APP.pages.budget.kindOf = function (category) {
+    return category.isSavingsFund ? "savings" :
+      category.isDebtCategory ? "debt" :
+        "spending";
+  };
+
+  // Saves after the browser has moved focus (Tab, click), then puts focus back on the same
+  // input in the re-rendered page so editing can continue without hunting for your place.
+  APP.pages.budget.commitKeepingFocus = function (focusKey) {
+    window.setTimeout(function () {
+      var active = document.activeElement;
+
+      APP.pages.budget.view.focusKey = focusKey !== undefined ?
+        focusKey :
+        active && active.dataset ? active.dataset.planFocus || "" : "";
+
+      APP.controller.commit();
+    }, 0);
+  };
+
+  APP.pages.budget.restoreFocus = function (root) {
+    var key = APP.pages.budget.view.focusKey;
+
+    APP.pages.budget.view.focusKey = "";
+
+    if (!key || APP.state.settings.activeView !== "budget") {
+      return;
+    }
+
+    var target = root.querySelector('[data-plan-focus="' + key + '"]');
+
+    if (target) {
+      target.focus();
+
+      if (target.select && target.type !== "search") {
+        target.select();
+      }
+    }
+  };
+
+  APP.pages.budget.rowStatus = function (kind, target, actual) {
+    var difference = target - actual;
+
+    if (!target) {
+      return { key: "none", label: actual > 0 ? "No target" : "—", tone: "muted" };
+    }
+
+    if (kind === "savings") {
+      return difference > 0 ?
+        { key: "under", label: APP.utils.currency(difference) + " to go", tone: "muted" } :
+        { key: "met", label: difference < 0 ? "Ahead by " + APP.utils.currency(-difference) : "Goal met", tone: "success" };
+    }
+
+    if (kind === "debt") {
+      return difference > 0 ?
+        { key: "under", label: APP.utils.currency(difference) + " to pay", tone: "muted" } :
+        { key: "met", label: difference < 0 ? APP.utils.currency(-difference) + " extra paid" : "Paid", tone: "success" };
+    }
+
+    if (difference < 0) {
+      return { key: "over", label: "Over by " + APP.utils.currency(-difference), tone: "danger" };
+    }
+
+    return difference === 0 ?
+      { key: "met", label: "Fully used", tone: "warning" } :
+      { key: "under", label: APP.utils.currency(difference) + " left", tone: actual / target >= 0.9 ? "warning" : "success" };
+  };
+
+  APP.pages.budget.barColor = function (kind, status) {
+    if (kind === "savings") {
+      return APP.charts.flow.savings;
+    }
+
+    if (kind === "debt") {
+      return APP.charts.flow.debt;
+    }
+
+    return status.tone === "danger" ? APP.charts.status.critical :
+      status.tone === "warning" ? APP.charts.status.warning :
+        APP.charts.status.good;
+  };
+
+  // Shows or hides rows and group headers for the current search and filter, without
+  // re-rendering, so typing in the search box stays smooth.
+  APP.pages.budget.applyFilters = function (root) {
+    var view = APP.pages.budget.view;
+    var query = view.query.trim().toLowerCase();
+    var searching = Boolean(query) || view.filter !== "all";
+    var shown = 0;
+
+    Array.prototype.slice.call(root.querySelectorAll(".plan-group")).forEach(function (group) {
+      var rows = Array.prototype.slice.call(group.querySelectorAll(".plan-row"));
+      var matches = 0;
+
+      rows.forEach(function (row) {
+        var match = (!query || row.dataset.name.indexOf(query) !== -1) &&
+          (view.filter === "all" ||
+            view.filter === "over" && row.dataset.status === "over" ||
+            view.filter === "none" && row.dataset.status === "none" ||
+            view.filter === "activity" && row.dataset.activity === "1");
+
+        row.hidden = !match || (!searching && view.collapsed[group.dataset.group]);
+        matches += match ? 1 : 0;
+      });
+
+      group.hidden = searching && !matches;
+      group.classList.toggle("is-collapsed", !searching && Boolean(view.collapsed[group.dataset.group]));
+      shown += matches;
+    });
+
+    var empty = root.querySelector(".plan-no-results");
+
+    if (empty) {
+      empty.hidden = shown > 0;
+    }
+  };
+
   APP.pages.budget.render = function () {
     var root = APP.dom.refs.pages.budget;
+    var view = APP.pages.budget.view;
     var month = APP.state.settings.selectedMonth;
     var budget = APP.model.budget(month, true);
     var activity = APP.analytics.categoryActivity(month);
     var salary = APP.analytics.salary();
+    var expected = APP.utils.money(budget.expectedIncome);
+    var byKind = { spending: 0, savings: 0, debt: 0 };
 
-    var totalGoals = APP.utils.sum(budget.items, function (item) {
-      return item.dollarTarget;
+    var categories = APP.state.categories.filter(function (category) {
+      return !category.archived;
     });
 
-    var incomeAfterGoals =
-      APP.utils.money(budget.expectedIncome) - totalGoals;
+    categories.forEach(function (category) {
+      var item = APP.model.budgetItem(budget, category.id);
+      byKind[APP.pages.budget.kindOf(category)] += item ? APP.utils.money(item.dollarTarget) : 0;
+    });
 
-    var goalPercent = APP.utils.money(budget.expectedIncome) > 0 ?
-      totalGoals / APP.utils.money(budget.expectedIncome) * 100 :
-      0;
+    var totalGoals = byKind.spending + byKind.savings + byKind.debt;
+    var incomeAfterGoals = expected - totalGoals;
 
     APP.dom.clear(root);
 
     var page = APP.dom.el("section", "panel monthly-plan-page");
     var actionRow = APP.dom.el("div", "button-row");
-
     var useSalary = APP.ui.button("Use salary estimate");
     var copyPrior = APP.ui.button("Copy prior month");
-    var saveNotice = APP.dom.el(
-      "span",
-      "muted",
-      "Changes save automatically."
-    );
 
     useSalary.addEventListener("click", function () {
       budget.expectedIncome = APP.utils.money(salary.netMonthly);
-
-      APP.store.log(
-        "success",
-        "Estimated net monthly salary copied to the monthly plan."
-      );
-
+      APP.store.log("success", "Estimated net monthly salary copied to the monthly plan.");
       APP.controller.commit();
     });
 
@@ -105,187 +224,271 @@
 
     actionRow.appendChild(useSalary);
     actionRow.appendChild(copyPrior);
-    actionRow.appendChild(saveNotice);
 
     page.appendChild(APP.ui.panelHeader(
-      "Monthly Category Budget",
-      "Spending targets are limits. Savings targets are desired fund contributions. Dollar and percentage targets stay synchronized.",
+      "Monthly Plan · " + APP.controller.monthName(month),
+      "Give every dollar of expected income a job. Spending targets are limits; savings and debt targets are amounts to put in. Changes save automatically.",
       actionRow
     ));
 
-    var incomeRow = APP.dom.el("div", "monthly-income-row");
-
-    var expectedIncome = APP.ui.field(
-      "Expected monthly income",
-      "expectedIncome",
-      "number",
-      budget.expectedIncome,
-      {
-        min: "0",
-        step: "0.01"
-      }
-    );
-
-    expectedIncome.input.addEventListener("change", function () {
-      budget.expectedIncome = APP.utils.money(expectedIncome.input.value);
-
-      APP.store.log(
-        "info",
-        "Expected monthly income updated for " + month + "."
-      );
-
-      APP.controller.commit();
+    // Income and where it is assigned.
+    var overview = APP.dom.el("div", "plan-overview");
+    var incomeBox = APP.dom.el("div", "plan-income");
+    var expectedIncome = APP.ui.field("Expected monthly income", "expectedIncome", "number", budget.expectedIncome, {
+      min: "0",
+      step: "0.01"
     });
 
-    incomeRow.appendChild(expectedIncome.root);
+    expectedIncome.input.dataset.planFocus = "expectedIncome";
+    expectedIncome.input.addEventListener("change", function () {
+      budget.expectedIncome = APP.utils.money(expectedIncome.input.value);
+      APP.store.log("info", "Expected monthly income updated for " + month + ".");
+      APP.pages.budget.commitKeepingFocus();
+    });
 
-    incomeRow.appendChild(APP.dom.el(
-      "p",
-      "muted",
-      "Estimated salary reference: " +
-      APP.utils.currency(salary.netMonthly)
-    ));
+    incomeBox.appendChild(expectedIncome.root);
+    incomeBox.appendChild(APP.dom.el("small", "muted", "Salary estimate: " + APP.utils.currency(salary.netMonthly)));
+    overview.appendChild(incomeBox);
 
-    page.appendChild(incomeRow);
+    var allocation = APP.dom.el("div", "plan-allocation");
+    var allocationHead = APP.dom.el("div", "plan-allocation-head");
+    var leftLabel = incomeAfterGoals >= 0 ? "Left to assign" : "Over-assigned";
 
-    var summary = APP.dom.el("div", "fund-hero monthly-plan-summary");
+    allocationHead.appendChild(APP.dom.el("strong", incomeAfterGoals < 0 ? "danger" : "",
+      APP.utils.currency(Math.abs(incomeAfterGoals)) + " " + leftLabel.toLowerCase()));
+    allocationHead.appendChild(APP.dom.el("span", "muted",
+      APP.utils.currency(totalGoals) + " assigned of " + APP.utils.currency(expected) +
+      (expected > 0 ? " (" + (totalGoals / expected * 100).toFixed(1) + "%)" : "")));
+    allocation.appendChild(allocationHead);
 
-    summary.appendChild(APP.ui.currencyCard(
-      "Expected income",
-      budget.expectedIncome,
-      "success"
-    ));
+    var bar = APP.dom.el("div", "plan-allocation-bar");
+    var legend = APP.dom.el("div", "plan-allocation-legend");
+    var base = Math.max(expected, totalGoals) || 1;
 
-    summary.appendChild(APP.ui.currencyCard(
-      "Total goals",
-      totalGoals,
-      totalGoals > APP.utils.money(budget.expectedIncome) ? "danger" : ""
-    ));
+    [
+      ["Spending", byKind.spending, APP.charts.flow.spending],
+      ["Savings", byKind.savings, APP.charts.flow.savings],
+      ["Debt", byKind.debt, APP.charts.flow.debt],
+      [leftLabel, Math.abs(incomeAfterGoals), incomeAfterGoals < 0 ? APP.charts.status.critical : APP.charts.track]
+    ].forEach(function (part) {
+      if (part[1] <= 0) {
+        return;
+      }
 
-    summary.appendChild(APP.ui.currencyCard(
-      "Income after goals",
-      incomeAfterGoals,
-      incomeAfterGoals < 0 ? "danger" : "success"
-    ));
+      var segment = APP.dom.el("span");
+      segment.style.width = part[1] / base * 100 + "%";
+      segment.style.background = part[2];
+      segment.title = part[0] + ": " + APP.utils.currency(part[1]);
+      bar.appendChild(segment);
 
-    var percentCard = APP.dom.el(
-      "article",
-      "summary-card " +
-      (goalPercent > 100 ? "danger" : "")
+      var key = APP.dom.el("span", "plan-legend-item");
+      var swatch = APP.dom.el("i");
+      swatch.style.background = part[2];
+      key.appendChild(swatch);
+      key.appendChild(document.createTextNode(part[0] + " " + APP.utils.currency(part[1])));
+      legend.appendChild(key);
+    });
+
+    allocation.appendChild(bar);
+    allocation.appendChild(legend);
+    overview.appendChild(allocation);
+    page.appendChild(overview);
+
+    // Group categories by their group, in the order groups first appear in the category list.
+    var groups = [];
+    var groupMap = {};
+
+    categories.forEach(function (category) {
+      var name = category.group || "Other";
+
+      if (!groupMap[name]) {
+        groupMap[name] = [];
+        groups.push(name);
+      }
+
+      groupMap[name].push(category);
+    });
+
+    // Search, filters and quick links.
+    var tools = APP.dom.el("div", "plan-tools");
+    var search = APP.dom.el("input", "plan-search");
+
+    search.type = "search";
+    search.placeholder = "Find a category…";
+    search.value = view.query;
+    search.setAttribute("aria-label", "Find a category");
+    search.dataset.planFocus = "search";
+    search.addEventListener("input", function () {
+      view.query = search.value;
+      APP.pages.budget.applyFilters(page);
+    });
+    tools.appendChild(search);
+
+    var filters = APP.dom.el("div", "plan-filters");
+    [
+      ["all", "All"],
+      ["over", "Over budget"],
+      ["none", "No target"],
+      ["activity", "Has activity"]
+    ].forEach(function (item) {
+      var chip = APP.dom.el("button", "plan-chip" + (view.filter === item[0] ? " active" : ""), item[1]);
+
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", view.filter === item[0] ? "true" : "false");
+      chip.addEventListener("click", function () {
+        view.filter = item[0];
+        Array.prototype.slice.call(filters.children).forEach(function (other) {
+          other.classList.toggle("active", other === chip);
+          other.setAttribute("aria-pressed", other === chip ? "true" : "false");
+        });
+        APP.pages.budget.applyFilters(page);
+      });
+      filters.appendChild(chip);
+    });
+    tools.appendChild(filters);
+
+    var toggleAll = APP.ui.button(
+      groups.every(function (name) { return view.collapsed[name]; }) ? "Expand all" : "Collapse all",
+      "button-quiet"
     );
+    toggleAll.addEventListener("click", function () {
+      var collapse = toggleAll.textContent === "Collapse all";
 
-    percentCard.appendChild(APP.dom.el("span", "", "Goals % income"));
-    percentCard.appendChild(APP.dom.el(
-      "strong",
-      "",
-      APP.utils.money(budget.expectedIncome) > 0 ?
-        goalPercent.toFixed(1) + "%" :
-        "—"
-    ));
+      groups.forEach(function (name) {
+        view.collapsed[name] = collapse;
+      });
+      toggleAll.textContent = collapse ? "Expand all" : "Collapse all";
+      APP.pages.budget.applyFilters(page);
+    });
+    tools.appendChild(toggleAll);
+    page.appendChild(tools);
 
-    summary.appendChild(percentCard);
-    page.appendChild(summary);
+    var jump = APP.dom.el("nav", "plan-jump");
+    jump.setAttribute("aria-label", "Jump to category group");
+    groups.forEach(function (name, index) {
+      var link = APP.dom.el("button", "plan-jump-link", name);
 
+      link.type = "button";
+      link.addEventListener("click", function () {
+        view.collapsed[name] = false;
+        APP.pages.budget.applyFilters(page);
+
+        var target = page.querySelector('[data-group-index="' + index + '"]');
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+      jump.appendChild(link);
+    });
+    page.appendChild(jump);
+
+    // The plan table: one tbody per group, with a clickable subtotal header row.
     var wrap = APP.dom.el("div", "table-wrap monthly-plan-table-wrap");
     var table = APP.dom.el("table", "data-table monthly-plan-table");
     var head = APP.dom.el("thead");
-    var body = APP.dom.el("tbody");
     var headerRow = APP.dom.el("tr");
 
-    [
-      "Category",
-      "Dollar Target",
-      "% Income",
-      "Actual",
-      "Remaining / Over",
-      "Status"
-    ].forEach(function (label) {
+    ["Category", "Target", "% Income", "Actual", "Progress"].forEach(function (label) {
       headerRow.appendChild(APP.dom.el("th", "", label));
     });
 
     head.appendChild(headerRow);
+    table.appendChild(head);
 
-    APP.state.categories
-      .filter(function (category) {
-        return !category.archived;
-      })
-      .slice()
-      .sort(function (a, b) {
+    var focusOrder = [];
+
+    groups.forEach(function (name, groupIndex) {
+      var body = APP.dom.el("tbody", "plan-group");
+      var members = groupMap[name].slice().sort(function (a, b) {
         return a.name.localeCompare(b.name);
-      })
-      .forEach(function (category) {
+      });
+      var subtotal = { target: 0, actual: 0, over: 0 };
+
+      body.dataset.group = name;
+      body.dataset.groupIndex = String(groupIndex);
+
+      var groupRow = APP.dom.el("tr", "plan-group-row");
+      var groupCell = APP.dom.el("th");
+      var groupButton = APP.dom.el("button", "plan-group-toggle");
+
+      groupCell.colSpan = 5;
+      groupCell.scope = "rowgroup";
+      groupButton.type = "button";
+      groupButton.setAttribute("aria-expanded", view.collapsed[name] ? "false" : "true");
+      groupButton.addEventListener("click", function () {
+        view.collapsed[name] = !view.collapsed[name];
+        groupButton.setAttribute("aria-expanded", view.collapsed[name] ? "false" : "true");
+        APP.pages.budget.applyFilters(page);
+      });
+
+      groupCell.appendChild(groupButton);
+      groupRow.appendChild(groupCell);
+      body.appendChild(groupRow);
+
+      members.forEach(function (category) {
+        var kind = APP.pages.budget.kindOf(category);
         var currentItem = APP.model.budgetItem(budget, category.id);
-        var target = currentItem ?
-          APP.utils.money(currentItem.dollarTarget) :
-          0;
+        var target = currentItem ? APP.utils.money(currentItem.dollarTarget) : 0;
+        var actual = APP.pages.budget.actualForCategory(category, activity[category.id] || {});
+        var status = APP.pages.budget.rowStatus(kind, target, actual);
+        var percent = expected > 0 ? target / expected * 100 : 0;
+        var row = APP.dom.el("tr", "plan-row");
 
-        var categoryActivity = activity[category.id] || {};
-        var actual = APP.pages.budget.actualForCategory(
-          category,
-          categoryActivity
-        );
+        subtotal.target += target;
+        subtotal.actual += actual;
+        subtotal.over += kind === "spending" && status.key === "over" ? 1 : 0;
 
-        var remaining = target - actual;
-        var status = "No target";
-        var statusClass = "muted";
+        row.dataset.name = category.name.toLowerCase() + " " + name.toLowerCase();
+        row.dataset.status = kind === "spending" ? status.key : status.key === "none" ? "none" : "ok";
+        row.dataset.activity = actual > 0 ? "1" : "0";
 
-        if (target > 0 && actual < target) {
-          status = "On track";
-          statusClass = "success";
+        var nameCell = APP.dom.el("td", "plan-name");
+        nameCell.appendChild(APP.dom.el("span", "", category.name));
+
+        if (kind !== "spending") {
+          nameCell.appendChild(APP.dom.el("small", "plan-kind plan-kind-" + kind, kind === "savings" ? "Savings" : "Debt"));
         }
 
-        if (target > 0 && actual === target) {
-          status = "Target met";
-          statusClass = "success";
+        row.appendChild(nameCell);
+
+        function input(field, value, step) {
+          var element = APP.dom.el("input", "monthly-target-input");
+
+          element.type = "number";
+          element.min = "0";
+          element.step = step;
+          element.value = value;
+          element.defaultValue = value;
+          element.dataset.planFocus = category.id + ":" + field;
+          element.setAttribute("aria-label", category.name + (field === "target" ? " target" : " percent of income"));
+          focusOrder.push(element.dataset.planFocus);
+
+          return element;
         }
 
-        if (target > 0 && actual > target) {
-          status = "Over target";
-          statusClass = "danger";
-        }
+        var targetInput = input("target", target, "0.01");
+        var percentInput = input("percent", percent.toFixed(1), "0.1");
 
-        var percent = APP.utils.money(budget.expectedIncome) > 0 ?
-          target / APP.utils.money(budget.expectedIncome) * 100 :
-          0;
-
-        var row = APP.dom.el("tr");
-        var targetCell = APP.dom.el("td");
-        var percentCell = APP.dom.el("td");
-
-        var targetInput = APP.dom.el("input");
-        targetInput.type = "number";
-        targetInput.min = "0";
-        targetInput.step = "0.01";
-        targetInput.value = target;
-        targetInput.className = "monthly-target-input";
-
-        var percentInput = APP.dom.el("input");
-        percentInput.type = "number";
-        percentInput.min = "0";
-        percentInput.step = "0.1";
-        percentInput.value = percent.toFixed(1);
-        percentInput.className = "monthly-target-input";
-
-        function saveTarget(value) {
+        function saveTarget(value, focusKey) {
           var budgetItem = APP.model.budgetItem(budget, category.id);
 
           if (!budgetItem) {
-            budgetItem = {
-              categoryId: category.id,
-              dollarTarget: 0
-            };
-
+            budgetItem = { categoryId: category.id, dollarTarget: 0 };
             budget.items.push(budgetItem);
           }
 
           budgetItem.dollarTarget = APP.utils.money(value);
+          APP.store.log("info", "Updated target for " + category.name + ".");
+          APP.pages.budget.commitKeepingFocus(focusKey);
+        }
 
-          APP.store.log(
-            "info",
-            "Updated target for " + category.name + "."
-          );
+        function percentToDollars() {
+          if (expected <= 0) {
+            APP.dom.toast("Set expected monthly income before entering a percentage target.", "danger");
+            return null;
+          }
 
-          APP.controller.commit();
+          return expected * APP.utils.number(percentInput.value) / 100;
         }
 
         targetInput.addEventListener("change", function () {
@@ -293,68 +496,99 @@
         });
 
         percentInput.addEventListener("change", function () {
-          if (APP.utils.money(budget.expectedIncome) <= 0) {
-            APP.dom.toast(
-              "Set expected monthly income before entering a percentage target.",
-              "danger"
-            );
+          var dollars = percentToDollars();
 
-            return;
+          if (dollars !== null) {
+            saveTarget(dollars);
           }
-
-          saveTarget(
-            APP.utils.money(budget.expectedIncome) *
-            APP.utils.number(percentInput.value) / 100
-          );
         });
 
-        row.appendChild(APP.dom.el(
-          "td",
-          "",
-          category.name +
-          (category.isSavingsFund ? " (Savings Fund)" : "")
-        ));
+        // Enter saves and jumps to the same field on the next visible row.
+        [[targetInput, "target"], [percentInput, "percent"]].forEach(function (pair) {
+          pair[0].addEventListener("keydown", function (event) {
+            if (event.key !== "Enter") {
+              return;
+            }
 
+            event.preventDefault();
+
+            var visible = Array.prototype.slice.call(
+              page.querySelectorAll(".plan-row:not([hidden]) input[data-plan-focus$=':" + pair[1] + "']")
+            );
+            var next = visible[visible.indexOf(pair[0]) + 1];
+            var nextKey = next ? next.dataset.planFocus : pair[0].dataset.planFocus;
+            var changed = pair[0].value !== String(pair[0].defaultValue);
+
+            if (!changed) {
+              if (next) {
+                next.focus();
+                next.select();
+              }
+              return;
+            }
+
+            if (pair[1] === "target") {
+              saveTarget(targetInput.value, nextKey);
+            } else {
+              var dollars = percentToDollars();
+
+              if (dollars !== null) {
+                saveTarget(dollars, nextKey);
+              }
+            }
+          });
+        });
+
+        var targetCell = APP.dom.el("td");
+        var percentCell = APP.dom.el("td");
         targetCell.appendChild(targetInput);
         percentCell.appendChild(percentInput);
-
         row.appendChild(targetCell);
         row.appendChild(percentCell);
 
-        row.appendChild(APP.dom.el(
-          "td",
-          actual > 0 ? "money-expense" : "money-zero",
-          actual > 0 ?
-            "−" + APP.utils.currency(actual) :
-            APP.utils.currency(actual)
-        ));
+        row.appendChild(APP.dom.el("td", actual > 0 ? "plan-actual" : "plan-actual money-zero",
+          APP.utils.currency(actual)));
 
-        row.appendChild(APP.dom.el(
-          "td",
-          remaining < 0 ? "money-expense" :
-            remaining > 0 ? "money-income" :
-              "money-zero",
-          target <= 0 ?
-            "—" :
-            remaining < 0 ?
-              "−" + APP.utils.currency(Math.abs(remaining)) :
-              APP.utils.currency(remaining)
-        ));
+        var progressCell = APP.dom.el("td", "plan-progress");
+        var track = APP.dom.el("div", "budget-track");
+        var fill = APP.dom.el("span", "budget-fill");
+        var scale = Math.max(target, actual) || 1;
 
-        row.appendChild(APP.dom.el(
-          "td",
-          statusClass,
-          status
-        ));
+        fill.style.width = (target || actual ? Math.min(100, actual / scale * 100) : 0) + "%";
+        fill.style.background = APP.pages.budget.barColor(kind, status);
+        track.appendChild(fill);
 
+        if (target && actual > target && kind === "spending") {
+          var mark = APP.dom.el("span", "budget-mark");
+          mark.style.left = target / scale * 100 + "%";
+          track.appendChild(mark);
+        }
+
+        progressCell.appendChild(track);
+        progressCell.appendChild(APP.dom.el("span", "plan-status " + status.tone, status.label));
+        row.appendChild(progressCell);
         body.appendChild(row);
       });
 
-    table.appendChild(head);
-    table.appendChild(body);
-    wrap.appendChild(table);
+      groupButton.appendChild(APP.dom.el("span", "plan-caret", "▾"));
+      groupButton.appendChild(APP.dom.el("span", "plan-group-name", name));
+      groupButton.appendChild(APP.dom.el("span", "plan-group-count", members.length + (members.length === 1 ? " category" : " categories")));
+      groupButton.appendChild(APP.dom.el("span", "plan-group-total",
+        APP.utils.currency(subtotal.actual) + " of " + APP.utils.currency(subtotal.target)));
 
+      if (subtotal.over) {
+        groupButton.appendChild(APP.dom.el("span", "plan-group-alert", subtotal.over + " over"));
+      }
+
+      table.appendChild(body);
+    });
+
+    wrap.appendChild(table);
     page.appendChild(wrap);
+    page.appendChild(APP.dom.el("p", "muted plan-no-results", "No categories match. Clear the search or pick another filter."));
     root.appendChild(page);
+
+    APP.pages.budget.applyFilters(page);
+    APP.pages.budget.restoreFocus(page);
   };
 }());
