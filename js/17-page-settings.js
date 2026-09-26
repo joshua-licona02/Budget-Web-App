@@ -412,18 +412,26 @@
       "model",
       "text",
       ollama.model,
-      { placeholder: "llama3.2" }
+      { placeholder: "qwen3:8b" }
     );
 
     var timeout = APP.ui.field(
-      "Timeout in milliseconds",
+      "Stall timeout in milliseconds (max pause between streamed words)",
       "timeout",
       "number",
       ollama.timeoutMs,
       { min: "1000", step: "1000" }
     );
 
-    [endpoint, model, timeout].forEach(function (field) {
+    var contextLength = APP.ui.field(
+      "Context window in tokens",
+      "contextLength",
+      "number",
+      ollama.contextLength || 8192,
+      { min: "2048", step: "1024" }
+    );
+
+    [endpoint, model, timeout, contextLength].forEach(function (field) {
       ollamaForm.appendChild(field.root);
     });
 
@@ -456,13 +464,18 @@
         APP.utils.number(timeout.input.value) || 30000
       );
 
+      ollama.contextLength = Math.max(
+        2048,
+        APP.utils.number(contextLength.input.value) || 8192
+      );
+
       APP.store.log("success", "Ollama settings saved.");
       APP.controller.commit();
     });
 
     testOllama.addEventListener("click", function () {
       var address =
-        APP.utils.text(endpoint.input.value).replace(/\/$/, "");
+        (APP.utils.text(endpoint.input.value) || APP.pages.advisor.defaultEndpoint).replace(/\/$/, "");
 
       var modelName = APP.utils.text(model.input.value);
 

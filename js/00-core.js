@@ -54,7 +54,7 @@
         selectedMonth: month,
         activeView: "dashboard",
         dashboardVisuals: [],
-        ollama: { endpoint: "", model: "", timeoutMs: 30000 }
+        ollama: { endpoint: "http://localhost:11434", model: "", timeoutMs: 60000, contextLength: 8192 }
       },
       categories: [],
       transactions: [],

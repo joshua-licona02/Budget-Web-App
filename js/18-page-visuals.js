@@ -8,6 +8,11 @@
   APP.pages.visuals.profiles = {
     line: {
       topics: [
+        ["monthly_spending_pace", "Spending pace this month vs. budget"],
+        ["year_over_year_spending", "Spending this year vs. last year"],
+        ["savings_rate_trend", "Savings rate (% of income)"],
+        ["debt_balance_trend", "Debt balances over time"],
+        ["debt_strategy_comparison", "Debt payoff: avalanche vs. snowball"],
         ["income_trend", "Income trend"],
         ["operating_spending_trend", "Operating-spending trend"],
         ["total_outflow_trend", "Total cash-outflow trend"],
@@ -27,6 +32,9 @@
 
     bar: {
       topics: [
+        ["category_budget_status", "Budget vs. actual by category"],
+        ["savings_contribution_vs_goal", "Savings contributions vs. monthly goal"],
+        ["debt_payoff_timeline", "Estimated payoff date by debt"],
         ["income_vs_outflow", "Income versus cash outflow"],
         ["monthly_totals", "Monthly totals"],
         ["operating_category_comparison", "Operating spending by category"],
@@ -82,7 +90,8 @@
       topics: [
         ["operating_category_stacked", "Operating spending categories by month"],
         ["savings_fund_stacked", "Savings-fund contributions by month"],
-        ["cash_outflow_stacked", "Cash-outflow allocation by month"]
+        ["cash_outflow_stacked", "Cash-outflow allocation by month"],
+        ["debt_interest_vs_principal", "Debt payments: interest vs. principal"]
       ],
       timelines: [
         ["calendar_year_monthly", "Month-by-month for selected year"],
@@ -95,6 +104,10 @@
 
     area: {
       topics: [
+        ["monthly_spending_pace", "Spending pace this month vs. budget"],
+        ["year_over_year_spending", "Spending this year vs. last year"],
+        ["savings_rate_trend", "Savings rate (% of income)"],
+        ["debt_balance_trend", "Debt balances over time"],
         ["income_trend", "Income trend"],
         ["operating_spending_trend", "Operating-spending trend"],
         ["net_cash_flow_trend", "Net-cash-flow trend"],
@@ -157,7 +170,9 @@
 
     progress: {
       topics: [
-        ["monthly_budget_completion", "Monthly budget completion"],
+        ["monthly_spending_vs_budget", "Spending vs. budget this month (spent and left)"],
+        ["debt_total_paydown", "Total debt paid down"],
+        ["monthly_budget_completion", "Planned budget vs. expected income"],
         ["savings_monthly_completion", "Savings-fund monthly contribution completion"],
         ["savings_eventual_completion", "Savings-fund eventual-goal completion"],
         ["savings_goal_completion", "Savings-goal completion"],
@@ -172,7 +187,10 @@
 
     gauge: {
       topics: [
-        ["monthly_budget_completion", "Monthly budget completion"],
+        ["monthly_spending_vs_budget", "Spending vs. budget this month (spent and left)"],
+        ["debt_total_paydown", "Total debt paid down"],
+        ["savings_fund_rings", "All savings funds: goal progress rings"],
+        ["monthly_budget_completion", "Planned budget vs. expected income"],
         ["savings_monthly_completion", "Savings-fund monthly contribution completion"],
         ["savings_eventual_completion", "Savings-fund eventual-goal completion"],
         ["savings_goal_completion", "Savings-goal completion"],
@@ -214,48 +232,237 @@
     }
   };
 
-  APP.pages.visuals.defaultVisuals = function () {
-    return [
-      {
-        id: APP.utils.id("visual"),
-        title: "Six-Month Cash Flow",
-        chartType: "line",
-        topic: "net_cash_flow_trend",
-        timelineMode: "rolling_6_months",
-        categoryScope: "all",
-        categoryIds: [],
-        width: "wide",
-        height: "normal",
-        color: "#60a5fa",
-        visible: true
-      },
-      {
-        id: APP.utils.id("visual"),
-        title: "Operating Spending Allocation",
-        chartType: "doughnut",
-        topic: "operating_category_allocation",
-        timelineMode: "selected_month",
-        categoryScope: "all",
-        categoryIds: [],
-        width: "normal",
-        height: "normal",
-        color: "#4ade80",
-        visible: true
-      },
-      {
-        id: APP.utils.id("visual"),
-        title: "Income Allocation",
-        chartType: "sankey",
-        topic: "income_allocation",
-        timelineMode: "selected_month",
-        categoryScope: "all",
-        categoryIds: [],
-        width: "wide",
-        height: "normal",
-        color: "#a78bfa",
-        visible: true
+  APP.pages.visuals.topicLabel = function (visual) {
+    var profile = APP.pages.visuals.profiles[visual.chartType];
+    var match = profile && profile.topics.filter(function (topic) {
+      return topic[0] === visual.topic;
+    })[0];
+
+    return match ? match[1] : String(visual.topic || "")
+      .replace(/_/g, " ")
+      .replace(/^\w/, function (letter) {
+        return letter.toUpperCase();
+      });
+  };
+
+  // Topics whose category requirement differs from their chart type's default:
+  // "none" needs no category, "multiple" allows any number.
+  APP.pages.visuals.topicCategories = {
+    monthly_spending_vs_budget: "none",
+    monthly_budget_completion: "none",
+    debt_total_paydown: "none",
+    debt_balance_trend: "none",
+    debt_interest_vs_principal: "none",
+    debt_payoff_timeline: "none",
+    debt_strategy_comparison: "none",
+    savings_rate_trend: "none",
+    savings_fund_rings: "multiple"
+  };
+
+  APP.pages.visuals.categoryMode = function (chartType, topic) {
+    return APP.pages.visuals.topicCategories[topic] ||
+      APP.pages.visuals.profiles[chartType].categories;
+  };
+
+  // Built-in tabs. The preset only decides which recommended visuals a tab offers; names,
+  // order and the tabs themselves are the user's to change.
+  APP.pages.visuals.tabPresets = [
+    ["overview", "Overview"],
+    ["spending", "Spending"],
+    ["savings", "Savings"],
+    ["debt", "Debt"],
+    ["trends", "Trends"]
+  ];
+
+  APP.pages.visuals.presetForVisual = function (visual) {
+    var topic = visual.topic || "";
+
+    if ([
+      "monthly_spending_vs_budget",
+      "monthly_budget_completion",
+      "category_budget_status",
+      "income_allocation",
+      "selected_category_allocation",
+      "income_to_net_cash_flow",
+      "selected_category_cash_flow"
+    ].indexOf(topic) !== -1) {
+      return "overview";
+    }
+
+    if (/debt/.test(topic)) {
+      return "debt";
+    }
+
+    if (/savings/.test(topic)) {
+      return "savings";
+    }
+
+    if ([
+      "income_trend",
+      "net_cash_flow_trend",
+      "total_outflow_trend",
+      "income_vs_outflow",
+      "monthly_totals",
+      "year_over_year_spending"
+    ].indexOf(topic) !== -1 || /rolling_12|calendar_year/.test(visual.timelineMode) &&
+      /trend/.test(topic)) {
+      return "trends";
+    }
+
+    return "spending";
+  };
+
+  APP.pages.visuals.tabs = function () {
+    return APP.state.settings.dashboardTabs || [];
+  };
+
+  APP.pages.visuals.activeTab = function () {
+    var tabs = APP.pages.visuals.tabs();
+
+    return tabs.filter(function (tab) {
+      return tab.id === APP.state.settings.activeDashboardTab;
+    })[0] || tabs[0];
+  };
+
+  // Makes sure there is at least one tab, every visual sits on an existing tab, and the
+  // active tab exists. Visuals without a tab go to the tab matching their topic.
+  APP.pages.visuals.ensureTabs = function () {
+    var settings = APP.state.settings;
+
+    if (!Array.isArray(settings.dashboardTabs) || !settings.dashboardTabs.length) {
+      settings.dashboardTabs = APP.pages.visuals.tabPresets.map(function (preset) {
+        return { id: "tab_" + preset[0], name: preset[1], preset: preset[0] };
+      });
+    }
+
+    var tabs = settings.dashboardTabs;
+    var ids = tabs.map(function (tab) {
+      return tab.id;
+    });
+
+    (settings.dashboardVisuals || []).forEach(function (visual) {
+      if (ids.indexOf(visual.tabId) !== -1) {
+        return;
       }
-    ];
+
+      var preset = APP.pages.visuals.presetForVisual(visual);
+      var match = tabs.filter(function (tab) {
+        return tab.preset === preset;
+      })[0];
+
+      visual.tabId = (match || tabs[0]).id;
+    });
+
+    if (ids.indexOf(settings.activeDashboardTab) === -1) {
+      settings.activeDashboardTab = tabs[0].id;
+    }
+  };
+
+  APP.pages.visuals.recommendedVisuals = function (preset) {
+    function visual(title, chartType, topic, timelineMode, width, extra) {
+      var item = {
+        id: APP.utils.id("visual"),
+        title: title,
+        chartType: chartType,
+        topic: topic,
+        timelineMode: timelineMode,
+        categoryScope: "all",
+        categoryIds: [],
+        displayMode: "currency",
+        aggregationMode: "total",
+        width: width,
+        height: "normal",
+        color: "#d95926",
+        visible: true
+      };
+
+      Object.keys(extra || {}).forEach(function (name) {
+        item[name] = extra[name];
+      });
+
+      return item;
+    }
+
+    var byCategory = { aggregationMode: "byCategory" };
+
+    var layouts = {
+      overview: [
+        visual("Spending Budget This Month", "gauge", "monthly_spending_vs_budget", "selected_month", "normal"),
+        visual("Budget by Category", "bar", "category_budget_status", "selected_month", "normal"),
+        visual("Income Allocation", "sankey", "income_allocation", "selected_month", "wide", {
+          aggregationMode: "byCategory",
+          height: "tall"
+        }),
+        visual("Cash Flow This Month", "waterfall", "income_to_net_cash_flow", "selected_month", "wide")
+      ],
+      spending: [
+        visual("Spending Pace", "area", "monthly_spending_pace", "daily_selected_month", "wide"),
+        visual("Daily Spending", "calendarHeatmap", "daily_operating_spending", "daily_selected_month", "normal"),
+        visual("Where the Money Went", "doughnut", "operating_category_allocation", "selected_month", "normal"),
+        visual("Spending This Year", "stackedBar", "operating_category_stacked", "calendar_year_monthly", "wide"),
+        visual("Category Heatmap", "heatmap", "operating_category_heatmap", "rolling_6_months", "wide")
+      ],
+      savings: [
+        visual("Savings Goals", "gauge", "savings_fund_rings", "current_balance", "wide"),
+        visual("Contributions vs. Goal", "bar", "savings_contribution_vs_goal", "selected_month", "normal"),
+        visual("Savings Rate", "line", "savings_rate_trend", "rolling_12_months", "normal"),
+        visual("Savings Balances", "line", "savings_balance_trend", "rolling_12_months", "wide", byCategory)
+      ],
+      debt: [
+        visual("Debt Paid Down", "gauge", "debt_total_paydown", "current_balance", "normal"),
+        visual("Payoff Dates", "bar", "debt_payoff_timeline", "selected_month", "normal"),
+        visual("Avalanche vs. Snowball", "line", "debt_strategy_comparison", "rolling_12_months", "wide"),
+        visual("Debt Balances", "line", "debt_balance_trend", "rolling_12_months", "normal", byCategory),
+        visual("Interest vs. Principal", "stackedBar", "debt_interest_vs_principal", "rolling_12_months", "normal")
+      ],
+      trends: [
+        visual("Income vs. Outflow", "bar", "income_vs_outflow", "rolling_12_months", "wide"),
+        visual("Net Cash Flow", "line", "net_cash_flow_trend", "rolling_12_months", "normal", { color: "#3987e5" }),
+        visual("Spending by Category", "area", "operating_spending_trend", "rolling_12_months", "normal", byCategory),
+        visual("This Year vs. Last Year", "line", "year_over_year_spending", "calendar_year_monthly", "wide")
+      ]
+    };
+
+    return layouts[preset] || [];
+  };
+
+  APP.pages.visuals.defaultVisuals = function () {
+    APP.pages.visuals.ensureTabs();
+
+    return APP.pages.visuals.tabs().reduce(function (list, tab) {
+      return list.concat(APP.pages.visuals.recommendedVisuals(tab.preset).map(function (visual) {
+        visual.tabId = tab.id;
+        return visual;
+      }));
+    }, []);
+  };
+
+  // Puts any recommended visual that a tab does not already have (same chart type, topic
+  // and timeline) at the top of that tab, keeping everything else. Returns the number added.
+  APP.pages.visuals.addRecommended = function (tabId) {
+    var tab = APP.pages.visuals.tabs().filter(function (item) {
+      return item.id === tabId;
+    })[0];
+
+    if (!tab) {
+      return 0;
+    }
+
+    var existing = APP.state.settings.dashboardVisuals || [];
+    var missing = APP.pages.visuals.recommendedVisuals(tab.preset).filter(function (candidate) {
+      return !existing.some(function (visual) {
+        return visual.tabId === tab.id &&
+          visual.chartType === candidate.chartType &&
+          visual.topic === candidate.topic &&
+          visual.timelineMode === candidate.timelineMode;
+      });
+    }).map(function (visual) {
+      visual.tabId = tab.id;
+      return visual;
+    });
+
+    APP.state.settings.dashboardVisuals = missing.concat(existing);
+    return missing.length;
   };
 
   APP.pages.visuals.optionList = function (items) {
@@ -305,7 +512,10 @@
       return visual.id === visualId;
     })[0];
 
+    APP.pages.visuals.ensureTabs();
+
     var visual = existing || {
+      tabId: APP.pages.visuals.activeTab().id,
       title: "New Dashboard Visual",
       chartType: "line",
       topic: "income_trend",
@@ -411,6 +621,18 @@
       visual.color
     );
 
+    var tab = APP.ui.field(
+      "Dashboard tab",
+      "tab",
+      "select",
+      visual.tabId,
+      {
+        options: APP.pages.visuals.tabs().map(function (item) {
+          return { value: item.id, label: item.name };
+        })
+      }
+    );
+
     var checklistLabel = APP.dom.el("div", "form-field full");
     var checklistTitle = APP.dom.el("span", "", "Select categories");
     var checklist = APP.pages.visuals.categoryChecklist(visual.categoryIds);
@@ -464,7 +686,16 @@
         timelineValid ? desiredTimeline : profile.timelines[0][0]
       );
 
-      if (profile.categories === "single") {
+      updateCategoryFields();
+    }
+
+    function updateCategoryFields() {
+      var mode = APP.pages.visuals.categoryMode(chartType.input.value, topic.input.value);
+
+      if (mode === "none") {
+        scope.root.style.display = "none";
+        checklistLabel.style.display = "none";
+      } else if (mode === "single") {
         scope.root.style.display = "none";
         checklistLabel.style.display = "";
         checklistTitle.textContent =
@@ -479,21 +710,15 @@
     }
 
     chartType.input.addEventListener("change", updateConfigurationOptions);
-
-    scope.input.addEventListener("change", function () {
-      var profile = APP.pages.visuals.profiles[chartType.input.value];
-
-      if (profile.categories !== "single") {
-        checklistLabel.style.display =
-          scope.input.value === "selected" ? "" : "none";
-      }
-    });
+    topic.input.addEventListener("change", updateCategoryFields);
+    scope.input.addEventListener("change", updateCategoryFields);
 
     [
       title,
       chartType,
       topic,
       timeline,
+      tab,
       scope,
       width,
       color
@@ -507,13 +732,15 @@
     form.addEventListener("submit", function (event) {
       event.preventDefault();
 
-      var profile = APP.pages.visuals.profiles[chartType.input.value];
+      var mode = APP.pages.visuals.categoryMode(chartType.input.value, topic.input.value);
       var selectedIds = APP.pages.visuals.checkedCategoryIds(checklist);
-      var categoryScope = profile.categories === "single" ?
-        "selected" :
-        scope.input.value;
+      var categoryScope = mode === "none" ?
+        "all" :
+        mode === "single" ?
+          "selected" :
+          scope.input.value;
 
-      if (profile.categories === "single" && selectedIds.length > 1) {
+      if (mode === "single" && selectedIds.length > 1) {
         APP.dom.toast(
           "Choose only one category, savings fund, goal, or debt for this visual.",
           "danger"
@@ -529,18 +756,32 @@
         return;
       }
 
-      var record = {
-        id: existing ? existing.id : APP.utils.id("visual"),
-        title: APP.utils.text(title.input.value),
-        chartType: chartType.input.value,
-        topic: topic.input.value,
-        timelineMode: timeline.input.value,
-        categoryScope: categoryScope,
-        categoryIds: categoryScope === "selected" ? selectedIds : [],
-        width: width.input.value,
-        color: color.input.value || "#60a5fa",
-        visible: existing ? existing.visible : true
-      };
+      // Start from the existing visual so settings this form doesn't show (height,
+      // By Category, Currency/Percent) survive an edit.
+      var record = {};
+
+      Object.keys(existing || {}).forEach(function (name) {
+        record[name] = existing[name];
+      });
+
+      record.id = existing ? existing.id : APP.utils.id("visual");
+      record.title = APP.utils.text(title.input.value);
+      record.chartType = chartType.input.value;
+      record.topic = topic.input.value;
+      record.timelineMode = timeline.input.value;
+      record.tabId = tab.input.value;
+      record.categoryScope = categoryScope;
+      record.categoryIds = categoryScope === "selected" ? selectedIds : [];
+      record.width = width.input.value;
+      record.color = color.input.value || "#60a5fa";
+      record.visible = existing ? existing.visible : true;
+      record.height = record.height || "normal";
+      record.displayMode = record.displayMode || "currency";
+      record.aggregationMode = record.aggregationMode || "total";
+
+      if (existing) {
+        delete APP.controller.visualRuntime[record.id];
+      }
 
       if (existing) {
         APP.state.settings.dashboardVisuals =
@@ -550,6 +791,9 @@
       } else {
         APP.state.settings.dashboardVisuals.push(record);
       }
+
+      // Show the tab the visual was saved to.
+      APP.state.settings.activeDashboardTab = record.tabId;
 
       APP.ui.closeModal();
       APP.controller.commit();

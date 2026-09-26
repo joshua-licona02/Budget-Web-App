@@ -95,10 +95,13 @@
     return APP.dom.el("p", "muted", message);
   };
 
-  APP.ui.currencyCard = function (label, value, tone) {
+  APP.ui.currencyCard = function (label, value, tone, note) {
     var card = APP.dom.el("article", "summary-card " + (tone || ""));
     card.appendChild(APP.dom.el("span", "", label));
     card.appendChild(APP.dom.el("strong", "", APP.utils.currency(value)));
+    if (note) {
+      card.appendChild(APP.dom.el("small", "", note));
+    }
     return card;
   };
 }());
