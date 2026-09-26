@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Personal Budget Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Optional CDN dependencies. App features degrade safely if blocked. -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside id="app-sidebar" class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">$</div>
+        <div>
+          <strong>Budget</strong>
+          <span>Local-first planner</span>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Main navigation">
+        <button class="nav-item active" data-view="dashboard" type="button">Dashboard</button>
+        <button class="nav-item" data-view="transactions" type="button">Transactions</button>
+        <button class="nav-item" data-view="budget" type="button">Monthly Plan</button>
+        <button class="nav-item" data-view="savings" type="button">Savings & Goals</button>
+        <button class="nav-item" data-view="debts" type="button">Debts</button>
+        <button class="nav-item" data-view="salary" type="button">Salary Planner</button>
+        <button class="nav-item" data-view="advisor" type="button">Ollama Advisor</button>
+        <button class="nav-item" data-view="settings" type="button">Settings</button>
+      </nav>
+
+      <p class="sidebar-note">Data is stored locally in this browser.</p>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button id="mobile-menu-button" class="icon-button mobile-only" type="button" aria-label="Open navigation">☰</button>
+        <div>
+          <p id="view-eyebrow" class="eyebrow">Financial overview</p>
+          <h1 id="view-title">Dashboard</h1>
+        </div>
+        <div class="topbar-actions">
+          <label class="month-control">
+            <span>Reporting month</span>
+            <input id="selected-month" type="month">
+          </label>
+          <button id="quick-add-transaction" class="button button-primary" type="button">+ Transaction</button>
+        </div>
+      </header>
+
+      <div class="notice notice-info">
+        <strong>Planning notice:</strong> Estimates, projections, and advisor responses are informational only.
+        They are not tax, payroll, legal, investment, accounting, or professional financial advice.
+      </div>
+
+      <section id="view-dashboard" class="app-view active-view">
+  <div id="dashboard-summary" class="summary-grid"></div>
+
+  <div id="dashboard-toolbar" class="dashboard-toolbar"></div>
+
+  <div id="dashboard-visuals" class="dashboard-grid"></div>
+</section>
+
+      <section id="view-transactions" class="app-view">
+        <article class="panel">
+          <div class="panel-heading">
+            <div><h2>Transactions</h2><p>Income, expenses, savings contributions, and savings-funded expenses.</p></div>
+            <div class="button-row">
+              <button id="import-transactions-button" class="button button-secondary" type="button">Import CSV/XLSX</button>
+              <button id="add-transaction-button" class="button button-primary" type="button">+ Add transaction</button>
+            </div>
+          </div>
+          <input id="transaction-import-input" type="file" accept=".csv,.xlsx" hidden>
+          <div id="transactions-workspace"></div>
+        </article>
+      </section>
+
+      <section id="view-budget" class="app-view"><article class="panel"><div id="budget-workspace"></div></article></section>
+      <section id="view-savings" class="app-view"><div id="savings-workspace"></div></section>
+      <section id="view-debts" class="app-view"> <div id="debts-workspace"></div></section>
+      <section id="view-salary" class="app-view"><article class="panel"><div id="salary-workspace"></div></article></section>
+      <section id="view-advisor" class="app-view"><article class="panel"><div id="advisor-workspace"></div></article></section>
+      <section id="view-settings" class="app-view"><article class="panel"><div id="settings-workspace"></div></article></section>
+
+      <section class="panel audit-panel">
+        <div class="panel-heading">
+          <div><h2>Audit log</h2><p>Data imports, warnings, exports, and application events.</p></div>
+          <button id="clear-audit-log-button" class="button button-quiet" type="button">Clear log</button>
+        </div>
+        <div id="audit-log" class="audit-log"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <script src="js/00-core.js"></script>
+  <script src="js/01-dom.js"></script>
+  <script src="js/02-utils.js"></script>
+  <script src="js/03-ingest-xlsx.js"></script>
+  <script src="js/04-clean.js"></script>
+  <script src="js/05-model.js"></script>
+  <script src="js/06-analytics.js"></script>
+  <script src="js/07-charts.js"></script>
+  <script src="js/08-tables.js"></script>
+  <script src="js/09-exports.js"></script>
+  <script src="js/10-ui-components.js"></script>
+  <script src="js/11-page-transactions.js"></script>
+  <script src="js/12-page-budget.js"></script>
+  <script src="js/13-page-savings.js"></script>
+  <script src="js/14-page-goals-debts.js"></script>
+  <script src="js/15-page-salary.js"></script>
+  <script src="js/16-page-categories.js"></script>
+  <script src="js/17-page-settings.js"></script>
+  <script src="js/18-page-visuals.js"></script>
+  <script src="js/19-page-advisor.js"></script>
+  <script src="js/99-controller.js"></script>
+
+    <script src="testRecorder.js"></script>
+</body>
+</html>

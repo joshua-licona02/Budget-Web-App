@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "currentVersion": "3.2.1",
+  "releases": [
+    {
+      "version": "1.0",
+      "releaseType": "feature",
+      "releaseTypeLabel": "Minor feature add",
+      "filename": "personal-budget-dashboard v1.0.html",
+      "hash": "63603b7a99e40a55fdbeda425e9600d82a186555739bd6746e99fdb53f770181",
+      "shipTarget": "offline-ai",
+      "shippedAt": "2026-09-25T00:00:46.823Z"
+    },
+    {
+      "version": "2.0",
+      "releaseType": "major",
+      "releaseTypeLabel": "Major update",
+      "filename": "personal-budget-dashboard v2.0.html",
+      "hash": "42eb8f4b3fa23ad946eafba2eca785b2c2602778ff5f60a87bf4b7447886528f",
+      "shipTarget": "offline",
+      "shippedAt": "2026-09-25T16:13:36.579Z"
+    },
+    {
+      "version": "3.0",
+      "releaseType": "major",
+      "releaseTypeLabel": "Major update",
+      "filename": "personal-budget-dashboard v3.0.html",
+      "hash": "1c73f685305595c3be01524651ebd9a6fce253783bb6707b92885f69ee45326c",
+      "shipTarget": "offline",
+      "shippedAt": "2026-09-25T16:15:59.793Z"
+    },
+    {
+      "version": "3.1",
+      "releaseType": "feature",
+      "releaseTypeLabel": "Minor feature add",
+      "filename": "personal-budget-dashboard v3.1.html",
+      "hash": "cf4aa3d541d5dc2e40b40d5198c86e316b9bb0e5358d62b2a95ff651a60f7a94",
+      "shipTarget": "offline",
+      "shippedAt": "2026-09-25T16:16:57.672Z"
+    },
+    {
+      "version": "3.2",
+      "releaseType": "feature",
+      "releaseTypeLabel": "Minor feature add",
+      "filename": "personal-budget-dashboard v3.2.html",
+      "hash": "aaf8faaf193c9fea23a007e9a19348f45b5c59b8962b5efda8a36e1bb857b762",
+      "shipTarget": "offline-ai",
+      "shippedAt": "2026-09-25T20:16:58.246Z"
+    },
+    {
+      "version": "3.2.1",
+      "releaseType": "bugfix",
+      "releaseTypeLabel": "Bug fix",
+      "filename": "personal-budget-dashboard v3.2.1.html",
+      "hash": "ba61ecc01bfe55c297acd6ea65b4d44e99445bef73f0fee35a93503e2d30a340",
+      "shipTarget": "offline-ai",
+      "shippedAt": "2026-09-25T20:29:02.709Z"
+    }
+  ]
+}
