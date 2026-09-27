@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// Copy this file to firestore.rules and list the Google accounts allowed to use the budget.
+// Only the accounts listed here can read or change the budget. To share it with someone,
+// add their Google email (lowercase) to the list and run: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+          'you@gmail.com',
+          'partner@gmail.com'
+        ];
+    }
+
+    match /households/{household} {
+      allow read, write: if isMember();
+
+      match /{document=**} {
+        allow read, write: if isMember();
+      }
+    }
+  }
+}

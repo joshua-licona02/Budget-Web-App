@@ -3671,9 +3671,10 @@
     });
   };
 
-  APP.controller.init = function () {
-    APP.dom.init();
-    APP.store.load();
+  // Brings stored data up to date with the current app: fills defaults, migrates older
+  // formats and places visuals on tabs. Safe to run repeatedly; cloud sync runs it after
+  // loading data another device saved.
+  APP.controller.normalizeState = function () {
     APP.model.initialize();
     APP.model.migrateTransactions();
 
@@ -3702,6 +3703,12 @@
 
       APP.state.settings.dashboardLayoutVersion = 3;
     }
+  };
+
+  APP.controller.init = function () {
+    APP.dom.init();
+    APP.store.load();
+    APP.controller.normalizeState();
 
     APP.store.log("info", "Budget dashboard initialized.");
 
@@ -3711,6 +3718,10 @@
     APP.controller.switchView(
       APP.state.settings.activeView || "dashboard"
     );
+
+    // Lets optional modules (cloud sync) start once the app is set up.
+    APP.ready = true;
+    window.dispatchEvent(new Event("app:ready"));
   };
 
   window.addEventListener(

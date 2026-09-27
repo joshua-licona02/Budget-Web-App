@@ -804,10 +804,13 @@
 
     page.appendChild(portability);
 
+    var shared = Boolean(APP.cloud && APP.cloud.ready);
     var reset =
       APP.pages.settings.section(
-        "Reset Local Data",
-        "This permanently removes all Budget Dashboard data stored in this browser."
+        shared ? "Reset Budget Data" : "Reset Local Data",
+        shared ?
+          "This permanently removes all budget data from the cloud, for everyone who shares this budget, and from every signed-in device." :
+          "This permanently removes all Budget Dashboard data stored in this browser."
       );
 
     var resetButton = APP.ui.button(
@@ -816,7 +819,8 @@
     );
 
     resetButton.addEventListener("click", function () {
-      if (window.prompt(
+      if (window.prompt(shared ?
+        "This deletes the shared budget for everyone. Type RESET to continue." :
         "Type RESET to permanently remove all local data."
       ) !== "RESET") {
         return;
