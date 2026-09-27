@@ -1005,8 +1005,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
   .pace-stats{grid-template-columns:1fr 1fr 1fr}
   .calendar-day{min-height:36px}
   .calendar-amount{font-size:.62rem}
-  .sankey-label-title{font-size:18px}
-  .sankey-label-value{font-size:15px}
 }
 .summary-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .visual-chart-area:has(> .sankey-svg){overflow-y:auto}
@@ -1104,3 +1102,55 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
 .monthly-plan-table td:nth-child(3) .monthly-target-input{width:76px}
 .monthly-plan-table td,.monthly-plan-table th{padding:8px 10px}
 .plan-progress{min-width:150px}
+
+/* Cloud sign-in gate and sync status */
+.cloud-gate{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px 16px;background:var(--bg)}
+.cloud-gate[hidden]{display:none}
+.cloud-locked{overflow:hidden}
+.cloud-gate-card{display:grid;gap:14px;justify-items:center;width:min(380px,100%);padding:32px 24px;border:1px solid var(--border);border-radius:18px;background:var(--surface);text-align:center}
+.cloud-gate-card .brand-mark{width:52px;height:52px;border-radius:14px;font-size:1.5rem}
+.cloud-gate-card h1{margin:0;font-size:1.5rem}
+.cloud-gate-message{margin:0;color:var(--muted);font-size:.92rem;line-height:1.5}
+.cloud-gate-button{width:100%;min-height:46px;font-size:1rem}
+.cloud-gate-button[hidden],.cloud-gate-secondary[hidden]{display:none}
+.sync-panel{display:grid;gap:6px;left:14px;right:14px}
+.sync-status{display:flex;align-items:center;gap:7px;margin:0;color:var(--muted);font-size:.74rem}
+.sync-status i{width:8px;height:8px;border-radius:50%;background:#6b7c93;flex:0 0 auto}
+.sync-status[data-status="synced"] i{background:#199e70}
+.sync-status[data-status="syncing"] i,.sync-status[data-status="connecting"] i{background:#3987e5}
+.sync-status[data-status="offline"] i{background:#c98500}
+.sync-status[data-status="error"] i{background:#e66767}
+.sync-account{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:.72rem}
+.sync-email{overflow:hidden;color:#c9d6e6;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.sync-signout{padding:0;border:0;color:var(--blue);background:none;font-size:.72rem;cursor:pointer}
+.sync-signout:hover{text-decoration:underline}
+.cloud-choice{display:grid;gap:16px}
+.cloud-choice p{margin:0;line-height:1.5}
+
+/* Phone fit: nothing wider than the screen */
+.settings-page{grid-template-columns:minmax(0,1fr)}
+.settings-page>*{min-width:0}
+.button-row{flex-wrap:wrap}
+@media (max-width:720px){
+  .topbar{flex-wrap:wrap}
+  .topbar>div:not(.topbar-actions){flex:1 1 auto;min-width:0}
+  .topbar h1{font-size:1.45rem}
+  .topbar-actions{flex:1 1 100%;justify-content:space-between}
+  .topbar-actions .month-control{flex:1 1 auto}
+  .topbar-actions .month-control input{width:100%}
+  .notice{font-size:.78rem;padding:10px 12px}
+  .panel{padding:14px}
+  .panel-heading{flex-wrap:wrap}
+  .monthly-plan-page>.panel-heading .button{white-space:normal}
+}
+
+/* Phone layout pieces for the gauge and sankey */
+.gauge-center strong{white-space:nowrap}
+.sankey-sources{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:6px;color:var(--muted);font-size:.8rem}
+.sankey-key{display:inline-flex;align-items:center;gap:6px}
+.sankey-key i{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.sankey-key strong{color:var(--text)}
+.sankey-breakdown{display:grid;gap:12px;margin-top:10px}
+.sankey-breakdown-group{display:grid;gap:4px}
+.sankey-breakdown-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0 4px 16px;border-bottom:1px solid rgba(154,173,195,.1);font-size:.82rem}
+.sankey-breakdown-value{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}

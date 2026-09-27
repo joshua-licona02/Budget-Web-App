@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Personal Budget Dashboard</title>
+  <meta name="theme-color" content="#09111c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
 
   <!-- Optional CDN dependencies. App features degrade safely if blocked. -->
@@ -33,7 +41,10 @@
         <button class="nav-item" data-view="settings" type="button">Settings</button>
       </nav>
 
-      <p class="sidebar-note">Data is stored locally in this browser.</p>
+      <div class="sidebar-note sync-panel">
+        <p id="sync-status" class="sync-status" data-status="signed-out"><i></i><span class="sync-label">Not signed in</span></p>
+        <div id="sync-account" class="sync-account"></div>
+      </div>
     </aside>
 
     <main class="main-content">
@@ -120,6 +131,7 @@
   <script src="js/18-page-visuals.js"></script>
   <script src="js/19-page-advisor.js"></script>
   <script src="js/99-controller.js"></script>
+  <script type="module" src="js/cloud-sync.js" async></script>
 
     <script src="testRecorder.js"></script>
 </body>

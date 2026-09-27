@@ -546,8 +546,45 @@
 
     root.appendChild(wrap);
 
+    // Keeps the headline inside the arc's opening at any width: centers it on the arc and
+    // shrinks the text until it fits between the arc's ends.
+    var fitCenter = {
+      id: "gaugeCenter",
+      afterDraw: function (chart) {
+        var arc = chart.getDatasetMeta(0).data[0];
+
+        if (!arc) {
+          return;
+        }
+
+        var size = Math.round(arc.innerRadius) + ":" + Math.round(arc.x) + ":" + Math.round(arc.y);
+
+        if (center.dataset.fit === size) {
+          return;
+        }
+
+        center.dataset.fit = size;
+
+        var room = Math.max(120, arc.innerRadius * 1.7);
+        var headline = center.querySelector("strong");
+        var font = 26;
+
+        center.style.width = room + "px";
+        center.style.left = arc.x - room / 2 + "px";
+        center.style.right = "auto";
+        center.style.bottom = Math.max(0, chart.height - arc.y) + "px";
+        headline.style.fontSize = font + "px";
+
+        while (headline.scrollWidth > room && font > 13) {
+          font -= 1;
+          headline.style.fontSize = font + "px";
+        }
+      }
+    };
+
     APP.charts.instances[key] = new window.Chart(canvas, {
       type: "doughnut",
+      plugins: [fitCenter],
       data: {
         datasets: [{
           data: [percentage, 100 - percentage],
@@ -570,6 +607,10 @@
         }
       }
     });
+
+    // Layout is known as soon as the chart exists; fit now rather than waiting for the
+    // first animation frame, which a background tab may delay.
+    fitCenter.afterDraw(APP.charts.instances[key]);
   };
 
   // Spent-versus-budget rows. items: { label, spent, budget, kind: "spending" | "debt" |
@@ -769,6 +810,18 @@
       return group.children && group.children.length;
     });
 
+    // Phones don't have room for three labelled columns. There, the diagram shows income
+    // into the groups, and each group's categories follow as a list that wraps.
+    var available = root.clientWidth || 1000;
+    var narrow = available < 560;
+    var breakdown = narrow && hasChildren;
+
+    hasChildren = hasChildren && !narrow;
+
+    if (narrow) {
+      root.style.height = "auto";
+    }
+
     var total = sources.reduce(function (sum, item) {
       return sum + item.value;
     }, 0);
@@ -779,16 +832,20 @@
     }, 0);
 
     // Drawn at the container's real pixel size so text stays at its intended size.
-    var width = Math.max(480, root.clientWidth || 1000);
+    var width = narrow ? Math.max(260, available) : Math.max(480, available);
     var nodeWidth = 14;
     var gap = 12;
     var padding = 16;
     var rightCount = hasChildren ? childCount : groups.length;
     var slot = 38;
-    var height = Math.max(root.clientHeight || 300, rightCount * (slot + 4) + padding * 2);
-    var columnX = (hasChildren ? [0.17, 0.5, 0.77] : [0.2, 0.66]).map(function (fraction) {
-      return Math.round(width * fraction);
-    });
+    var height = narrow ?
+      Math.max(200, rightCount * (slot + 12) + padding * 2) :
+      Math.max(root.clientHeight || 300, rightCount * (slot + 4) + padding * 2);
+    var columnX = narrow ?
+      [4, Math.round(width * 0.42)] :
+      (hasChildren ? [0.17, 0.5, 0.77] : [0.2, 0.66]).map(function (fraction) {
+        return Math.round(width * fraction);
+      });
     var ns = "http://www.w3.org/2000/svg";
     var gradientId = 0;
     var uid = "sk" + Math.random().toString(36).slice(2, 8);
@@ -1014,7 +1071,11 @@
 
     sourceNodes.forEach(function (source) {
       nodeRect(columnX[0], source, source.item.color, source.item.label + ": " + APP.utils.currency(source.item.value));
-      label(columnX[0] - 10, source.y + source.h / 2, "end", source.item.label, amount(source.item.value));
+
+      // On phones the sources are named in a line above the diagram instead.
+      if (!narrow) {
+        label(columnX[0] - 10, source.y + source.h / 2, "end", source.item.label, amount(source.item.value));
+      }
     });
 
     groupNodes.forEach(function (group) {
@@ -1033,7 +1094,53 @@
         child.item.label, amount(child.item.value));
     });
 
+    if (narrow) {
+      var heading = APP.dom.el("div", "sankey-sources");
+
+      sources.forEach(function (source) {
+        var item = APP.dom.el("span", "sankey-key");
+        var swatch = APP.dom.el("i");
+        swatch.style.background = source.color;
+        item.appendChild(swatch);
+        item.appendChild(APP.dom.el("strong", "", source.label));
+        item.appendChild(document.createTextNode(" " + amount(source.value)));
+        heading.appendChild(item);
+      });
+
+      root.appendChild(heading);
+    }
+
     root.appendChild(svg);
+
+    if (breakdown) {
+      var list = APP.dom.el("div", "sankey-breakdown");
+
+      groups.forEach(function (group) {
+        if (!group.children || !group.children.length) {
+          return;
+        }
+
+        var section = APP.dom.el("div", "sankey-breakdown-group");
+        var title = APP.dom.el("div", "sankey-key");
+        var swatch = APP.dom.el("i");
+
+        swatch.style.background = group.color;
+        title.appendChild(swatch);
+        title.appendChild(APP.dom.el("strong", "", group.label));
+        section.appendChild(title);
+
+        group.children.forEach(function (child) {
+          var row = APP.dom.el("div", "sankey-breakdown-row");
+          row.appendChild(APP.dom.el("span", "", child.label));
+          row.appendChild(APP.dom.el("span", "sankey-breakdown-value", amount(child.value)));
+          section.appendChild(row);
+        });
+
+        list.appendChild(section);
+      });
+
+      root.appendChild(list);
+    }
   };
 
   // Floating-bar waterfall: steps are { label, value, kind } where kind picks the flow
