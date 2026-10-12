@@ -93,7 +93,8 @@
       debt.apr,
       {
         min: "0",
-        step: "0.01"
+        step: "0.01",
+        percent: true
       }
     );
 

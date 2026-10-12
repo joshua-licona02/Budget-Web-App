@@ -41,7 +41,7 @@
         budget: byId("budget-workspace"),
         savings: byId("savings-workspace"),
         debts: byId("debts-workspace"),
-        salary: byId("salary-workspace"),
+        accounts: byId("accounts-workspace"),
         advisor: byId("advisor-workspace"),
         settings: byId("settings-workspace")
       }

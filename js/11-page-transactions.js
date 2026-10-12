@@ -183,7 +183,7 @@
     }
 
     APP.state.transactions = APP.state.transactions.filter(function (item) {
-      return item.id !== transactionId;
+      return item.id !== transactionId && item.roundUpFor !== transactionId;
     });
 
     APP.store.log(
@@ -247,10 +247,18 @@
       description: "",
       categoryId: "",
       type: "expense",
+      incomeType: "paycheck",
       amount: "",
       notes: "",
       debtAllocations: []
     };
+
+    var roundUpSettings = APP.pages.transactions.roundUpSettings();
+    var linkedRoundUp = existing && existing.roundUpId ?
+      APP.state.transactions.filter(function (item) {
+        return item.id === existing.roundUpId;
+      })[0] :
+      null;
 
     var categoryOptions = [{
       value: "",
@@ -265,8 +273,7 @@
             .map(function (category) {
         return {
           value: category.id,
-          label: category.name +
-            (category.isSavingsFund ? " [Savings Fund]" : "")
+          label: category.name
         };
       })
     ).concat([
@@ -327,11 +334,52 @@
       "Category",
       "categoryId",
       "select",
-      transaction.categoryId,
+      transaction.type === "income" ? "" : transaction.categoryId,
       {
         options: categoryOptions
       }
     );
+
+    var incomeType = APP.ui.field(
+      "Kind of income",
+      "incomeType",
+      "select",
+      transaction.incomeType || "paycheck",
+      {
+        options: APP.model.incomeTypes.map(function (item) {
+          return { value: item[0], label: item[1] };
+        })
+      }
+    );
+
+    // A refund goes back to a spending category and lowers that category's spending.
+    var refundCategory = APP.ui.field(
+      "Refunded to category",
+      "refundCategoryId",
+      "select",
+      transaction.type === "income" ? transaction.categoryId : "",
+      {
+        options: [{ value: "", label: "Select the category it goes back to" }].concat(
+          APP.state.categories.filter(function (item) {
+            return !item.archived && !item.isSavingsFund && !item.isDebtCategory;
+          }).sort(function (a, b) {
+            return a.name.localeCompare(b.name);
+          }).map(function (item) {
+            return { value: item.id, label: item.name };
+          })
+        )
+      }
+    );
+
+    // Round-up: save the change from rounding an expense up to the next dollar.
+    var roundUp = APP.dom.el("label", "round-up-option full");
+    var roundUpCheck = APP.dom.el("input");
+    var roundUpText = APP.dom.el("span");
+
+    roundUpCheck.type = "checkbox";
+    roundUpCheck.checked = existing ? Boolean(linkedRoundUp) : roundUpSettings.defaultOn;
+    roundUp.appendChild(roundUpCheck);
+    roundUp.appendChild(roundUpText);
 
     var notes = APP.ui.field(
       "Notes",
@@ -509,7 +557,7 @@
           "Allocate payment"
         ));
 
-        amountControl.appendChild(input);
+        amountControl.appendChild(APP.ui.moneyInput(input));
 
         row.appendChild(label);
         row.appendChild(amountControl);
@@ -535,11 +583,30 @@
       updateAllocationSummary();
     }
 
+    function roundUpAmount() {
+      var value = APP.utils.money(amount.input.value);
+      return value > 0 ? Math.round((Math.ceil(value) - value) * 100) / 100 : 0;
+    }
+
+    function updateRoundUp() {
+      var selected = APP.model.categories().byId[category.input.value];
+      var extra = roundUpAmount();
+      var eligible = type.input.value === "expense" &&
+        !(selected && selected.isSavingsFund) && extra > 0;
+
+      roundUp.style.display = eligible ? "" : "none";
+      roundUpText.textContent = "Round up to " +
+        APP.utils.currency(APP.utils.money(amount.input.value) + extra) + " and save " +
+        APP.utils.currency(extra) + " to " + APP.pages.transactions.roundUpFundName();
+    }
+
     function updateCategoryField() {
       var isIncome = type.input.value === "income";
+      var isRefund = isIncome && incomeType.input.value === "refund";
 
       category.root.style.display = isIncome ? "none" : "";
-      category.input.required = !isIncome;
+      incomeType.root.style.display = isIncome ? "" : "none";
+      refundCategory.root.style.display = isRefund ? "" : "none";
 
       if (isIncome) {
         category.input.value = "";
@@ -547,9 +614,14 @@
       } else {
         renderDebtAllocations(!existing);
       }
+
+      updateRoundUp();
     }
 
     type.input.addEventListener("change", updateCategoryField);
+    incomeType.input.addEventListener("change", updateCategoryField);
+    amount.input.addEventListener("input", updateRoundUp);
+    category.input.addEventListener("change", updateRoundUp);
 
         category.input.addEventListener("change", function () {
       if (
@@ -560,8 +632,10 @@
           var option = APP.dom.el(
             "option",
             "",
-            fund.name + " [Savings Fund]"
+            fund.name
           );
+
+          option.dataset.group = "Savings fund";
 
           option.value = fund.id;
           option.selected = true;
@@ -589,12 +663,21 @@
       description,
       type,
       category,
+      incomeType,
+      refundCategory,
       notes
     ].forEach(function (field) {
       form.appendChild(field.root);
     });
 
+    form.appendChild(roundUp);
     form.appendChild(allocationPanel);
+
+    APP.ui.tagCategoryOptions(category.input);
+    APP.ui.tagCategoryOptions(refundCategory.input);
+    APP.ui.searchSelect(category.input, { placeholder: "Search categories" });
+    APP.ui.searchSelect(refundCategory.input, { placeholder: "Search categories" });
+    updateCategoryField();
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -612,13 +695,18 @@
           return allocation.amount > 0;
         });
 
+      var isIncome = type.input.value === "income";
+      var isRefund = isIncome && incomeType.input.value === "refund";
+
       var candidate = {
         id: existing ? existing.id : APP.utils.id("txn"),
         date: parsedDate ? APP.utils.isoDate(parsedDate) : "",
         month: parsedDate ? APP.utils.month(parsedDate) : "",
         description: APP.utils.text(description.input.value),
-        categoryId: category.input.value || "",
+        categoryId: isRefund ? refundCategory.input.value || "" :
+          isIncome ? "" : category.input.value || "",
         type: type.input.value,
+        incomeType: isIncome ? incomeType.input.value : undefined,
         amount: APP.utils.money(amount.input.value),
         notes: APP.utils.text(notes.input.value),
         debtAllocations: allocations,
@@ -628,12 +716,21 @@
         updatedAt: new Date().toISOString()
       };
 
+      if (existing && existing.roundUpFor) {
+        candidate.roundUpFor = existing.roundUpFor;
+      }
+
       var errors = APP.model.validateTransaction(candidate);
 
       if (errors.length) {
         APP.dom.toast(errors.join(" "), "danger");
         return;
       }
+
+      APP.pages.transactions.applyRoundUp(
+        candidate,
+        roundUp.style.display !== "none" && roundUpCheck.checked ? roundUpAmount() : 0
+      );
 
       if (existing) {
         APP.state.transactions = APP.state.transactions.map(function (item) {
@@ -680,6 +777,104 @@
     );
   };
 
+  // Round-up preferences live in settings so every device and person shares them.
+  APP.pages.transactions.roundUpSettings = function () {
+    var settings = APP.state.settings.roundUp || {};
+
+    return {
+      defaultOn: Boolean(settings.defaultOn),
+      fundId: settings.fundId || ""
+    };
+  };
+
+  APP.pages.transactions.roundUpFund = function (create) {
+    var settings = APP.pages.transactions.roundUpSettings();
+    var fund = APP.state.categories.filter(function (category) {
+      return category.id === settings.fundId && category.isSavingsFund && !category.archived;
+    })[0];
+
+    if (fund || !create) {
+      return fund || null;
+    }
+
+    fund = APP.state.categories.filter(function (category) {
+      return category.isSavingsFund && !category.archived &&
+        APP.utils.header(category.name) === "round up savings";
+    })[0];
+
+    if (!fund) {
+      fund = {
+        id: APP.utils.id("cat"),
+        group: "Savings and Funds",
+        name: "Round-Up Savings",
+        isSavingsFund: true,
+        isDebtCategory: false,
+        isTemporary: false,
+        archived: false,
+        openingBalance: 0,
+        openingBalanceEffectiveMonth: "",
+        eventualSavingsGoal: 0,
+        eventualSavingsGoalDate: "",
+        createdAt: new Date().toISOString()
+      };
+      APP.state.categories.push(fund);
+      APP.store.log("success", "Created the Round-Up Savings fund.");
+    }
+
+    APP.state.settings.roundUp = { defaultOn: settings.defaultOn, fundId: fund.id };
+    return fund;
+  };
+
+  APP.pages.transactions.roundUpFundName = function () {
+    var fund = APP.pages.transactions.roundUpFund(false);
+    return fund ? fund.name : "Round-Up Savings";
+  };
+
+  // Creates, updates or removes the savings transaction that holds an expense's
+  // round-up. extra is the amount to save (0 removes it).
+  APP.pages.transactions.applyRoundUp = function (expense, extra) {
+    var previous = APP.state.transactions.filter(function (item) {
+      return item.roundUpFor === expense.id;
+    })[0];
+
+    if (!extra || expense.type !== "expense") {
+      if (previous) {
+        APP.state.transactions = APP.state.transactions.filter(function (item) {
+          return item !== previous;
+        });
+      }
+
+      delete expense.roundUpId;
+      return;
+    }
+
+    var fund = APP.pages.transactions.roundUpFund(true);
+    var saved = {
+      id: previous ? previous.id : APP.utils.id("txn"),
+      date: expense.date,
+      month: expense.month,
+      description: "Round-up: " + expense.description,
+      categoryId: fund.id,
+      type: "savings",
+      amount: extra,
+      notes: "",
+      debtAllocations: [],
+      roundUpFor: expense.id,
+      createdAt: previous ? previous.createdAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (previous) {
+      APP.state.transactions = APP.state.transactions.map(function (item) {
+        return item === previous ? saved : item;
+      });
+    } else {
+      APP.state.transactions.push(saved);
+    }
+
+    expense.roundUpId = saved.id;
+  };
+
   APP.pages.transactions.render = function () {
     var root = APP.dom.refs.pages.transactions;
     var filters = APP.pages.transactions.filters;
@@ -721,8 +916,10 @@
         options: [
           { value: "", label: "All types" },
           { value: "income", label: "Income" },
+          { value: "refund", label: "Refund" },
           { value: "operatingExpense", label: "Expense" },
           { value: "savingsContribution", label: "Savings contribution" },
+          { value: "freeMoneyContribution", label: "Moved to Free Money" },
           { value: "savingsWithdrawal", label: "Savings-funded expense" },
           { value: "debtPayment", label: "Debt payment" }
         ]
@@ -738,6 +935,9 @@
         options: APP.pages.transactions.categoryOptions()
       }
     );
+
+    APP.ui.tagCategoryOptions(category.input);
+    APP.ui.searchSelect(category.input, { placeholder: "All categories" });
 
     var period = APP.ui.field(
       "Date range",

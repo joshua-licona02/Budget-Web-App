@@ -4,6 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <script>
+    // Apply the last theme before the page draws, so light mode doesn't flash dark.
+    try {
+      var savedTheme = localStorage.getItem("personalBudgetDashboard.theme");
+      if (savedTheme) {
+        document.documentElement.dataset.theme = savedTheme;
+        document.querySelector('meta[name="color-scheme"]').content = savedTheme;
+      }
+    } catch (error) {}
+  </script>
   <title>Personal Budget Dashboard</title>
   <meta name="theme-color" content="#09111c">
   <meta name="mobile-web-app-capable" content="yes">
@@ -36,7 +46,7 @@
         <button class="nav-item" data-view="budget" type="button">Monthly Plan</button>
         <button class="nav-item" data-view="savings" type="button">Savings & Goals</button>
         <button class="nav-item" data-view="debts" type="button">Debts</button>
-        <button class="nav-item" data-view="salary" type="button">Salary Planner</button>
+        <button class="nav-item" data-view="accounts" type="button">Accounts</button>
         <button class="nav-item" data-view="advisor" type="button">Ollama Advisor</button>
         <button class="nav-item" data-view="settings" type="button">Settings</button>
       </nav>
@@ -93,7 +103,7 @@
       <section id="view-budget" class="app-view"><article class="panel"><div id="budget-workspace"></div></article></section>
       <section id="view-savings" class="app-view"><div id="savings-workspace"></div></section>
       <section id="view-debts" class="app-view"> <div id="debts-workspace"></div></section>
-      <section id="view-salary" class="app-view"><article class="panel"><div id="salary-workspace"></div></article></section>
+      <section id="view-accounts" class="app-view"><article class="panel"><div id="accounts-workspace"></div></article></section>
       <section id="view-advisor" class="app-view"><article class="panel"><div id="advisor-workspace"></div></article></section>
       <section id="view-settings" class="app-view"><article class="panel"><div id="settings-workspace"></div></article></section>
 
@@ -126,6 +136,7 @@
   <script src="js/13-page-savings.js"></script>
   <script src="js/14-page-goals-debts.js"></script>
   <script src="js/15-page-salary.js"></script>
+  <script src="js/15-page-accounts.js"></script>
   <script src="js/16-page-categories.js"></script>
   <script src="js/17-page-settings.js"></script>
   <script src="js/18-page-visuals.js"></script>

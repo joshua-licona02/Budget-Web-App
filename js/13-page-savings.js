@@ -16,6 +16,44 @@
   APP.pages.savings.cell = function (text, className) {
     return APP.dom.el("td", className || "", text);
   };
+  // Sets a fund's monthly contribution target in the selected month's plan.
+  APP.pages.savings.setMonthlyGoal = function (categoryId, amount) {
+    var budget = APP.model.budget(APP.state.settings.selectedMonth, true);
+    var item = APP.model.budgetItem(budget, categoryId);
+
+    if (!item) {
+      item = { categoryId: categoryId, dollarTarget: 0 };
+      budget.items.push(item);
+    }
+
+    item.dollarTarget = APP.utils.money(amount);
+    APP.store.log("success", "Updated a savings fund's monthly goal from its target date.");
+    APP.controller.commit();
+  };
+
+  // Live "save $X/month" hint under a goal and target-date pair of fields.
+  APP.pages.savings.goalHint = function (goalField, dateField, currentBalance) {
+    var hint = APP.dom.el("p", "field-hint full");
+
+    function update() {
+      var remaining = APP.utils.money(goalField.input.value) - (currentBalance || 0);
+      var plan = APP.analytics.goalPlan(remaining, dateField.input.value, APP.utils.month(new Date()));
+
+      hint.textContent = !plan ? "" :
+        plan.months > 0 ?
+          "To reach it by " + APP.controller.monthName(plan.targetMonth) + ": save " +
+            APP.utils.currency(plan.perMonth) + " a month for " + plan.months +
+            (plan.months === 1 ? " month." : " months.") :
+          "That date has already passed.";
+    }
+
+    goalField.input.addEventListener("input", update);
+    dateField.input.addEventListener("input", update);
+    dateField.input.addEventListener("change", update);
+    update();
+    return hint;
+  };
+
 APP.pages.savings.openFundModal = function (onCreated) {
   var form = APP.dom.el("form", "form-grid");
 
@@ -99,6 +137,24 @@ APP.pages.savings.openFundModal = function (onCreated) {
     ].forEach(function (field) {
       form.appendChild(field.root);
     });
+
+    var goalHint = APP.pages.savings.goalHint(eventualGoal, eventualDate, 0);
+    form.appendChild(goalHint);
+
+    // With a target date and no monthly goal typed, use the amount the date requires.
+    function fillMonthlyFromDate() {
+      var plan = APP.analytics.goalPlan(
+        APP.utils.money(eventualGoal.input.value) - APP.utils.money(openingBalance.input.value),
+        eventualDate.input.value,
+        APP.utils.month(new Date())
+      );
+
+      if (plan && plan.months > 0 && !APP.utils.money(monthlyGoal.input.value)) {
+        monthlyGoal.input.value = APP.ui.formatMoneyText(plan.perMonth);
+      }
+    }
+
+    eventualDate.input.addEventListener("change", fillMonthlyFromDate);
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -377,13 +433,45 @@ row.appendChild(APP.pages.savings.cell(
           detailText += " · Eventual savings goal reached.";
         }
 
-        if (fund.category.eventualSavingsGoalDate) {
-          detailText +=
-            " · Desired target date: " +
-            fund.category.eventualSavingsGoalDate + ".";
+        detailCell.textContent = detailText;
+
+        var plan = fund.targetPlan;
+
+        if (plan && fund.remainingEventual > 0) {
+          var planLine = APP.dom.el("div", "savings-target-plan");
+
+          if (plan.months > 0) {
+            planLine.appendChild(APP.dom.el("strong", "",
+              "Save " + APP.utils.currency(plan.perMonth) + "/month to reach " +
+              APP.utils.currency(fund.eventualGoal) + " by " +
+              APP.controller.monthName(plan.targetMonth)));
+            planLine.appendChild(APP.dom.el("span", "muted", " · " + plan.months +
+              (plan.months === 1 ? " month left" : " months left") +
+              (fund.monthlyGoal > 0 && fund.monthlyGoal < plan.perMonth ?
+                " · your current goal of " + APP.utils.currency(fund.monthlyGoal) + " is short by " +
+                  APP.utils.currency(plan.perMonth - fund.monthlyGoal) :
+                "")));
+
+            if (Math.abs(fund.monthlyGoal - plan.perMonth) >= 0.01) {
+              var useIt = APP.ui.button("Use as this month's goal", "button-quiet");
+
+              useIt.addEventListener("click", function () {
+                APP.pages.savings.setMonthlyGoal(fund.category.id, plan.perMonth);
+              });
+              planLine.appendChild(useIt);
+            }
+          } else {
+            planLine.appendChild(APP.dom.el("strong", "danger",
+              "The target date (" + APP.controller.monthName(plan.targetMonth) + ") has passed with " +
+              APP.utils.currency(fund.remainingEventual) + " to go. Set a new date to get a monthly amount."));
+          }
+
+          detailCell.appendChild(planLine);
+        } else if (!fund.category.eventualSavingsGoalDate && fund.remainingEventual > 0) {
+          detailCell.appendChild(APP.dom.el("div", "muted savings-target-plan",
+            "Add a target date (Edit) to see how much to save each month."));
         }
 
-        detailCell.textContent = detailText;
         detailRow.appendChild(detailCell);
         body.appendChild(detailRow);
       }

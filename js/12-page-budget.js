@@ -189,7 +189,9 @@
     var month = APP.state.settings.selectedMonth;
     var budget = APP.model.budget(month, true);
     var activity = APP.analytics.categoryActivity(month);
-    var salary = APP.analytics.salary();
+    // The salary estimate for this month counts the paychecks that land in it.
+    var monthPay = APP.analytics.salaryForMonth(month);
+    var salary = { netMonthly: monthPay.net, paychecks: monthPay.paychecks.length };
     var expected = APP.utils.money(budget.expectedIncome);
     var byKind = { spending: 0, savings: 0, debt: 0 };
 
@@ -247,7 +249,8 @@
     });
 
     incomeBox.appendChild(expectedIncome.root);
-    incomeBox.appendChild(APP.dom.el("small", "muted", "Salary estimate: " + APP.utils.currency(salary.netMonthly)));
+    incomeBox.appendChild(APP.dom.el("small", "muted", "Salary estimate: " + APP.utils.currency(salary.netMonthly) +
+      (salary.paychecks ? " (" + salary.paychecks + " paycheck" + (salary.paychecks === 1 ? "" : "s") + ")" : "")));
     overview.appendChild(incomeBox);
 
     var allocation = APP.dom.el("div", "plan-allocation");
@@ -541,7 +544,7 @@
 
         var targetCell = APP.dom.el("td");
         var percentCell = APP.dom.el("td");
-        targetCell.appendChild(targetInput);
+        targetCell.appendChild(APP.ui.moneyInput(targetInput));
         percentCell.appendChild(percentInput);
         row.appendChild(targetCell);
         row.appendChild(percentCell);
