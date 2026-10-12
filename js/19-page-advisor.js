@@ -47,8 +47,14 @@
     return {
       month: month,
       income: round(totals.income),
-      operatingSpending: round(totals.operating),
+      incomeByType: Object.keys(totals.incomeByType).reduce(function (result, type) {
+        result[APP.model.incomeTypeLabel(type)] = round(totals.incomeByType[type]);
+        return result;
+      }, {}),
+      operatingSpendingAfterRefunds: round(totals.operating),
+      refunds: round(totals.refunds),
       savingsContributions: round(totals.savingsContributions),
+      movedToFreeMoney: round(totals.freeMoney),
       savingsWithdrawals: round(totals.savingsWithdrawals),
       debtPayments: round(totals.debtPayments),
       totalCashOutflow: round(totals.cashOutflow),

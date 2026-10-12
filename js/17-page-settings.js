@@ -383,6 +383,70 @@
     });
 
     preferences.appendChild(currency.root);
+
+    // Theme is per device: one person can use light mode while the other uses dark.
+    var theme = APP.ui.field(
+      "Appearance",
+      "theme",
+      "select",
+      APP.state.settings.theme || "system",
+      {
+        options: [
+          { value: "system", label: "Match this device" },
+          { value: "light", label: "Light" },
+          { value: "dark", label: "Dark" }
+        ]
+      }
+    );
+
+    theme.input.addEventListener("change", function () {
+      APP.state.settings.theme = theme.input.value;
+      APP.controller.applyTheme();
+      APP.controller.commit();
+    });
+
+    preferences.appendChild(theme.root);
+
+    var roundUp = APP.pages.transactions.roundUpSettings();
+    var roundUpDefault = APP.dom.el("label", "settings-check");
+    var roundUpCheck = APP.dom.el("input");
+
+    roundUpCheck.type = "checkbox";
+    roundUpCheck.checked = roundUp.defaultOn;
+    roundUpDefault.appendChild(roundUpCheck);
+    roundUpDefault.appendChild(APP.dom.el("span", "",
+      "Round up new expenses to the next dollar by default (you can still change it on each expense)"));
+
+    var roundUpFund = APP.ui.field(
+      "Round-up savings fund",
+      "roundUpFund",
+      "select",
+      roundUp.fundId,
+      {
+        options: [{ value: "", label: "Round-Up Savings (created on first use)" }].concat(
+          APP.state.categories.filter(function (category) {
+            return category.isSavingsFund && !category.archived && !APP.model.isFreeMoney(category);
+          }).map(function (category) {
+            return { value: category.id, label: category.name };
+          })
+        )
+      }
+    );
+
+    function saveRoundUp() {
+      APP.state.settings.roundUp = {
+        defaultOn: roundUpCheck.checked,
+        fundId: roundUpFund.input.value
+      };
+      APP.store.log("info", "Round-up preferences updated.");
+      APP.controller.commit();
+    }
+
+    roundUpCheck.addEventListener("change", saveRoundUp);
+    roundUpFund.input.addEventListener("change", saveRoundUp);
+
+    preferences.appendChild(roundUpDefault);
+    preferences.appendChild(roundUpFund.root);
     page.appendChild(preferences);
 
     var ollamaSection =

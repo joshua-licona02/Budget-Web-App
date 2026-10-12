@@ -35,7 +35,21 @@
     savings: "#199e70",
     debt: "#3987e5",
     remaining: "#6b7c93",
-    shortfall: "#e66767"
+    shortfall: "#e66767",
+    // Violet separates clearly from spending orange, which it sits beside in outflow bars.
+    // It is close to debt blue, so diagrams keep the two apart and label both.
+    freeMoney: "#9085e9"
+  };
+
+  // Income sources are neutrals told apart by lightness and always labelled, so the
+  // colored hues stay reserved for where money goes.
+  APP.charts.incomeShades = {
+    paycheck: "#c3cfdd",
+    extra: "#a6b6c9",
+    gift: "#8d9fb5",
+    interest: "#7b8ca2",
+    other: "#6d7d92",
+    refund: "#b8c7a3"
   };
 
   // Reserved status colors. Always paired with a text label, never color alone.
@@ -114,7 +128,7 @@
   };
 
   APP.charts.alpha = function (hex, opacity) {
-    var value = parseInt(hex.slice(1), 16);
+    var value = parseInt(String(hex || APP.charts.categoryPalette[0]).slice(1), 16);
 
     return "rgba(" + (value >> 16 & 255) + "," + (value >> 8 & 255) + "," +
       (value & 255) + "," + opacity + ")";
@@ -138,7 +152,159 @@
   APP.charts.readableOn = function (rgb) {
     var parts = rgb.match(/\d+/g).map(Number);
     var luminance = (parts[0] * 299 + parts[1] * 587 + parts[2] * 114) / 1000;
-    return luminance > 140 ? "#0b1522" : "#eff6ff";
+    return luminance > 140 ? APP.charts.themes.dark.ink.dark : "#eff6ff";
+  };
+
+  // Tap (or click) cycle for chart tooltips: first tap shows the one point tapped, a
+  // second tap in the same column shows every series in that column, and a third tap
+  // closes it. While a tooltip is pinned, mouse movement doesn't replace it.
+  function setActive(chart, elements, event) {
+    var active = elements.map(function (element) {
+      return { datasetIndex: element.datasetIndex, index: element.index };
+    });
+
+    chart.setActiveElements(active);
+
+    if (chart.tooltip) {
+      chart.tooltip.setActiveElements(active, { x: event.x, y: event.y });
+    }
+
+    chart.update("none");
+  }
+
+  APP.charts.unpin = function (chart) {
+    chart.$pin = { level: 0, index: null };
+    setActive(chart, [], { x: 0, y: 0 });
+  };
+
+  APP.charts.tapToInspect = {
+    id: "tapToInspect",
+    beforeEvent: function (chart, args) {
+      var event = args.event;
+      var pin = chart.$pin || (chart.$pin = { level: 0, index: null });
+
+      if (event.type !== "click") {
+        // Keep a pinned tooltip in place while the mouse moves.
+        return pin.level ? false : undefined;
+      }
+
+      var real = function (element) {
+        var dataset = chart.data.datasets[element.datasetIndex];
+        return dataset && !dataset.isAverage;
+      };
+      var point = chart.getElementsAtEventForMode(event, "nearest", { intersect: true }, false)
+        .filter(real);
+      var cartesian = Boolean(chart.scales && chart.scales.x);
+      var column = cartesian ?
+        chart.getElementsAtEventForMode(event, "index", { intersect: false }, false).filter(real) :
+        [];
+      var index = point.length ? point[0].index : column.length ? column[0].index : null;
+
+      if (index === null) {
+        APP.charts.unpin(chart);
+      } else if (!pin.level || pin.index !== index) {
+        // A new spot: start with the single point, or the whole column if the tap missed
+        // every point.
+        if (point.length) {
+          chart.$pin = { level: 1, index: index };
+          setActive(chart, point.slice(0, 1), event);
+        } else {
+          chart.$pin = { level: 2, index: index };
+          setActive(chart, column, event);
+        }
+      } else if (pin.level === 1 && column.length > 1) {
+        chart.$pin = { level: 2, index: index };
+        setActive(chart, column, event);
+      } else {
+        APP.charts.unpin(chart);
+      }
+
+      return false;
+    }
+  };
+
+  // Chart colors for each theme. Dark is validated against the dark surface (#111d2d);
+  // light uses the same hues stepped for a white surface. setTheme copies a set into the
+  // live objects above, so renderers always read the current theme.
+  APP.charts.themes = {
+    dark: {
+      categoryPalette: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+      flow: {
+        income: "#c3cfdd", spending: "#d95926", savings: "#199e70", debt: "#3987e5",
+        remaining: "#6b7c93", shortfall: "#e66767", freeMoney: "#9085e9"
+      },
+      incomeShades: {
+        paycheck: "#c3cfdd", extra: "#a6b6c9", gift: "#8d9fb5",
+        interest: "#7b8ca2", other: "#6d7d92", refund: "#b8c7a3"
+      },
+      status: { good: "#199e70", warning: "#c98500", critical: "#e66767" },
+      otherColor: "#6b7c93",
+      totalColor: "#eff6ff",
+      surface: "#111d2d",
+      track: "#1c2b3f",
+      ink: {
+        text: "#eff6ff", soft: "#c9d6e6", muted: "#9aadc3", grid: "rgba(154,173,195,.10)",
+        connector: "rgba(154,173,195,.45)", tooltip: "#0b1522", tooltipBorder: "#2b405a", dark: "#0b1522"
+      }
+    },
+    light: {
+      categoryPalette: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
+      flow: {
+        income: "#64748b", spending: "#eb6834", savings: "#1baf7a", debt: "#2a78d6",
+        remaining: "#94a3b8", shortfall: "#e34948", freeMoney: "#4a3aa7"
+      },
+      incomeShades: {
+        paycheck: "#64748b", extra: "#7b8aa0", gift: "#8e9cb1",
+        interest: "#a3afc0", other: "#b6c0ce", refund: "#7d9a62"
+      },
+      status: { good: "#1baf7a", warning: "#eda100", critical: "#e34948" },
+      otherColor: "#94a3b8",
+      totalColor: "#0f172a",
+      surface: "#ffffff",
+      track: "#e3e8ef",
+      ink: {
+        text: "#0f172a", soft: "#334155", muted: "#5b6b80", grid: "rgba(15,23,42,.08)",
+        connector: "rgba(15,23,42,.35)", tooltip: "#ffffff", tooltipBorder: "#d3dbe6", dark: "#0b1522"
+      }
+    }
+  };
+
+  APP.charts.ink = {};
+  APP.charts.currentTheme = "dark";
+
+  APP.charts.setTheme = function (name) {
+    var theme = APP.charts.themes[name] || APP.charts.themes.dark;
+
+    APP.charts.currentTheme = APP.charts.themes[name] ? name : "dark";
+    APP.charts.categoryPalette.splice(0, APP.charts.categoryPalette.length);
+    Array.prototype.push.apply(APP.charts.categoryPalette, theme.categoryPalette);
+    Object.assign(APP.charts.flow, theme.flow);
+    Object.assign(APP.charts.incomeShades, theme.incomeShades);
+    Object.assign(APP.charts.status, theme.status);
+    Object.assign(APP.charts.ink, theme.ink);
+    APP.charts.otherColor = theme.otherColor;
+    APP.charts.totalColor = theme.totalColor;
+    APP.charts.surface = theme.surface;
+    APP.charts.track = theme.track;
+
+    if (APP.charts.themed) {
+      APP.charts.applyDefaults();
+    }
+  };
+
+  // Theme-dependent Chart.js defaults (fonts, ink, gridlines, tooltip colors).
+  APP.charts.applyDefaults = function () {
+    var defaults = window.Chart.defaults;
+    var ink = APP.charts.ink;
+
+    defaults.color = ink.muted;
+    defaults.borderColor = ink.grid;
+    defaults.plugins.legend.labels.color = ink.soft;
+    defaults.plugins.tooltip.backgroundColor = ink.tooltip;
+    defaults.plugins.tooltip.borderColor = ink.tooltipBorder;
+    defaults.plugins.tooltip.titleColor = ink.text;
+    defaults.plugins.tooltip.bodyColor = ink.soft;
+    defaults.plugins.tooltip.footerColor = ink.soft;
   };
 
   APP.charts.themed = false;
@@ -153,15 +319,12 @@
     APP.charts.themed = true;
     defaults.font.family = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
     defaults.font.size = 12;
-    defaults.color = "#9aadc3";
-    defaults.borderColor = "rgba(154,173,195,.10)";
     defaults.animation.duration = 450;
 
     defaults.plugins.legend.labels.usePointStyle = true;
     defaults.plugins.legend.labels.boxWidth = 8;
     defaults.plugins.legend.labels.boxHeight = 8;
     defaults.plugins.legend.labels.padding = 14;
-    defaults.plugins.legend.labels.color = "#c9d6e6";
 
     // Dashed series (like a total or a pace line) get a short dashed key instead of a dot.
     var baseLabels = defaults.plugins.legend.labels.generateLabels;
@@ -180,11 +343,7 @@
       });
     };
 
-    defaults.plugins.tooltip.backgroundColor = "#0b1522";
-    defaults.plugins.tooltip.borderColor = "#2b405a";
     defaults.plugins.tooltip.borderWidth = 1;
-    defaults.plugins.tooltip.titleColor = "#eff6ff";
-    defaults.plugins.tooltip.bodyColor = "#c9d6e6";
     defaults.plugins.tooltip.padding = 10;
     defaults.plugins.tooltip.cornerRadius = 8;
     defaults.plugins.tooltip.boxPadding = 5;
@@ -206,6 +365,25 @@
     defaults.elements.arc.borderWidth = 2;
 
     defaults.datasets.bar.maxBarThickness = 24;
+    APP.charts.applyDefaults();
+
+    // Touch moves (scrolling) never open tooltips; taps arrive as clicks and go through
+    // the tap-to-inspect plugin below. Hovering with a mouse shows the single point under it.
+    defaults.events = ["mousemove", "mouseout", "click"];
+    defaults.interaction.mode = "nearest";
+    defaults.interaction.intersect = true;
+    window.Chart.register(APP.charts.tapToInspect);
+
+    // Tapping anywhere outside a chart closes its pinned tooltip.
+    document.addEventListener("pointerdown", function (event) {
+      Object.keys(APP.charts.instances).forEach(function (key) {
+        var chart = APP.charts.instances[key];
+
+        if (chart && chart.$pin && chart.$pin.level && !chart.canvas.contains(event.target)) {
+          APP.charts.unpin(chart);
+        }
+      });
+    }, true);
     defaults.datasets.line.pointBackgroundColor = function (context) {
       return context.dataset.borderColor;
     };
@@ -246,7 +424,7 @@
     return {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: "index", intersect: false },
+      interaction: { mode: "nearest", intersect: true },
       plugins: {
         legend: {
           align: "start",
@@ -307,10 +485,10 @@
         context.save();
         context.textAlign = "center";
         context.textBaseline = "middle";
-        context.fillStyle = "#eff6ff";
+        context.fillStyle = APP.charts.ink.text;
         context.font = '800 20px Inter, system-ui, sans-serif';
         context.fillText(value, arc.x, arc.y - 8);
-        context.fillStyle = "#9aadc3";
+        context.fillStyle = APP.charts.ink.muted;
         context.font = '12px Inter, system-ui, sans-serif';
         context.fillText(title, arc.x, arc.y + 14);
         context.restore();
@@ -319,7 +497,8 @@
   };
 
   // Category-by-month matrix with a one-hue sequential ramp and a row total column.
-  APP.charts.matrix = function (root, rows, columns, color, formatter) {
+  APP.charts.matrix = function (root, rows, columns, color, formatter, options) {
+    var showAverage = Boolean(options && options.showAverage);
     APP.dom.clear(root);
 
     rows = rows.filter(function (row) {
@@ -340,13 +519,18 @@
 
     var grid = APP.dom.el("div", "matrix-grid");
     grid.style.gridTemplateColumns =
-      "minmax(96px, 1.3fr) repeat(" + columns.length + ", minmax(38px, 1fr)) minmax(56px, .9fr)";
+      "minmax(96px, 1.3fr) repeat(" + columns.length + ", minmax(38px, 1fr)) minmax(56px, .9fr)" +
+      (showAverage ? " minmax(56px, .9fr)" : "");
 
     grid.appendChild(APP.dom.el("span", "matrix-head", ""));
     columns.forEach(function (column) {
       grid.appendChild(APP.dom.el("span", "matrix-head", column));
     });
     grid.appendChild(APP.dom.el("span", "matrix-head matrix-total", "Total"));
+
+    if (showAverage) {
+      grid.appendChild(APP.dom.el("span", "matrix-head matrix-total", "Avg / mo"));
+    }
 
     rows.forEach(function (row) {
       var total = 0;
@@ -371,13 +555,17 @@
       });
 
       grid.appendChild(APP.dom.el("span", "matrix-total", format(total)));
+
+      if (showAverage) {
+        grid.appendChild(APP.dom.el("span", "matrix-total matrix-average", format(total / columns.length)));
+      }
     });
 
     root.appendChild(grid);
   };
 
   // Month calendar aligned to weekdays, one-hue ramp, today outlined, future days dimmed.
-  APP.charts.calendar = function (root, days, color) {
+  APP.charts.calendar = function (root, days, color, options) {
     APP.dom.clear(root);
 
     if (!days.length) {
@@ -405,6 +593,16 @@
     summary.appendChild(APP.dom.el("span", "", busiest && busiest.value > 0 ?
       "Highest day: " + Number(busiest.date.slice(8)) + " (" + APP.utils.currency(busiest.value) + ")" :
       "No activity yet this month"));
+
+    // The daily average counts days up to today (or the whole month once it's over).
+    if (options && options.showAverage) {
+      var elapsed = days.filter(function (day) {
+        return day.date <= today;
+      }).length || days.length;
+
+      summary.appendChild(APP.dom.el("span", "calendar-average",
+        "Average " + APP.utils.currency(total / elapsed) + "/day"));
+    }
     wrap.appendChild(summary);
 
     var grid = APP.dom.el("div", "calendar-heatmap");
@@ -766,6 +964,72 @@
     });
 
     root.appendChild(list);
+  };
+
+  // Per-category totals table grouped into sections. sections: [{ label, color,
+  // rows: [{ label, total, average, current }] }]. "This month vs. average" is shown as a
+  // plain percentage; whether that is good depends on the section, so it isn't colored.
+  APP.charts.breakdownTable = function (root, sections, options) {
+    var config = options || {};
+    APP.dom.clear(root);
+
+    sections = sections.filter(function (section) {
+      return section.rows.length;
+    });
+
+    if (!sections.length) {
+      APP.charts.message(root, "No category activity in this period.");
+      return;
+    }
+
+    var wrap = APP.dom.el("div", "table-wrap breakdown-wrap");
+    var table = APP.dom.el("table", "data-table breakdown-table");
+    var head = APP.dom.el("tr");
+
+    ["Category", "Total", config.averageLabel || "Avg / month", config.currentLabel || "This month", "vs. avg"]
+      .forEach(function (label) {
+        head.appendChild(APP.dom.el("th", "", label));
+      });
+
+    var thead = APP.dom.el("thead");
+    thead.appendChild(head);
+    table.appendChild(thead);
+
+    sections.forEach(function (section) {
+      var body = APP.dom.el("tbody");
+      var titleRow = APP.dom.el("tr", "breakdown-section");
+      var titleCell = APP.dom.el("th");
+      var swatch = APP.dom.el("i");
+      var sum = section.rows.reduce(function (total, row) {
+        return total + row.total;
+      }, 0);
+
+      titleCell.colSpan = 5;
+      titleCell.scope = "rowgroup";
+      swatch.style.background = section.color;
+      titleCell.appendChild(swatch);
+      titleCell.appendChild(document.createTextNode(section.label + " · " + APP.utils.currency(sum)));
+      titleRow.appendChild(titleCell);
+      body.appendChild(titleRow);
+
+      section.rows.forEach(function (row) {
+        var tr = APP.dom.el("tr");
+        var change = row.average ? (row.current - row.average) / row.average * 100 : null;
+
+        tr.appendChild(APP.dom.el("td", "breakdown-name", row.label));
+        tr.appendChild(APP.dom.el("td", "breakdown-number", APP.utils.currency(row.total)));
+        tr.appendChild(APP.dom.el("td", "breakdown-number", APP.utils.currency(row.average)));
+        tr.appendChild(APP.dom.el("td", "breakdown-number", APP.utils.currency(row.current)));
+        tr.appendChild(APP.dom.el("td", "breakdown-number muted", change === null ? "—" :
+          (change > 0 ? "+" : "") + Math.round(change) + "%"));
+        body.appendChild(tr);
+      });
+
+      table.appendChild(body);
+    });
+
+    wrap.appendChild(table);
+    root.appendChild(wrap);
   };
 
   // Small labelled figures shown above a chart. stats: [[label, value, note?]].
@@ -1166,7 +1430,8 @@
       colors.push(
         step.kind === "total" ?
           (step.value >= 0 ? APP.charts.flow.income : APP.charts.status.critical) :
-          APP.charts.flow[step.kind] || APP.charts.flow.spending
+          APP.charts.flow[step.kind] || APP.charts.incomeShades[step.kind] ||
+            APP.charts.flow.spending
       );
     });
 
@@ -1188,7 +1453,7 @@
             var next = meta.data[index + 1];
             var level = y.getPixelForValue(endValue);
 
-            context.strokeStyle = "rgba(154,173,195,.45)";
+            context.strokeStyle = APP.charts.ink.connector;
             context.lineWidth = 1;
             context.setLineDash([3, 3]);
             context.beginPath();
@@ -1202,7 +1467,7 @@
             step.value < 0 ? "−" : "+") + APP.charts.compact(Math.abs(step.value));
 
           context.setLineDash([]);
-          context.fillStyle = "#dbe7f5";
+          context.fillStyle = APP.charts.ink.soft;
           context.font = '600 11px Inter, system-ui, sans-serif';
           context.textAlign = "center";
           context.textBaseline = "bottom";

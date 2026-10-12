@@ -8,11 +8,24 @@
     var kind = APP.model.classify(transaction);
 
     if (kind === "income") {
-      return "Income";
+      var type = transaction.incomeType || "paycheck";
+      return type === "paycheck" ? "Income" : "Income — " + APP.model.incomeTypeLabel(type).toLowerCase();
+    }
+
+    if (kind === "refund") {
+      return "Refund";
     }
 
     if (kind === "savingsContribution") {
       return "Savings contribution";
+    }
+
+    if (kind === "freeMoneyContribution") {
+      return "Moved to Free Money";
+    }
+
+    if (transaction.roundUpFor) {
+      return "Round-up savings";
     }
 
     if (kind === "savingsWithdrawal") {
@@ -29,7 +42,7 @@
   APP.tables.transactionTone = function (transaction) {
     var kind = APP.model.classify(transaction);
 
-    if (kind === "income") {
+    if (kind === "income" || kind === "refund") {
       return {
         typeClass: "transaction-income",
         amountClass: "money-income",
@@ -37,7 +50,7 @@
       };
     }
 
-    if (kind === "savingsContribution") {
+    if (kind === "savingsContribution" || kind === "freeMoneyContribution") {
       return {
         typeClass: "transaction-savings",
         amountClass: "money-savings",

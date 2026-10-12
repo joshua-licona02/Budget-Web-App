@@ -18,7 +18,7 @@ const LINKED_KEY = "personalBudgetDashboard.cloudLinked";
 const DIRTY_KEY = "personalBudgetDashboard.cloudDirty";
 
 // Settings that describe this device's view rather than the shared budget.
-const LOCAL_SETTINGS = ["selectedMonth", "activeView", "activeDashboardTab", "ollama"];
+const LOCAL_SETTINGS = ["selectedMonth", "activeView", "activeDashboardTab", "ollama", "theme"];
 
 // Firebase functions, loaded on demand in main().
 let GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithRedirect,
@@ -80,7 +80,9 @@ function coreFromState() {
     budgets: APP.state.budgets,
     savingsGoals: APP.state.savingsGoals,
     debts: APP.state.debts,
-    salary: APP.state.salary
+    salary: APP.state.salary,
+    accounts: APP.state.accounts,
+    reconcile: APP.state.reconcile
   });
 }
 
@@ -94,7 +96,7 @@ function applyCore(json) {
     }
   });
 
-  ["schemaVersion", "categories", "budgets", "savingsGoals", "debts", "salary"].forEach(function (key) {
+  ["schemaVersion", "categories", "budgets", "savingsGoals", "debts", "salary", "accounts", "reconcile"].forEach(function (key) {
     if (core[key] !== undefined) {
       APP.state[key] = core[key];
     }

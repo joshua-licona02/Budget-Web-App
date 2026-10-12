@@ -33,6 +33,7 @@
     bar: {
       topics: [
         ["category_budget_status", "Budget vs. actual by category"],
+        ["category_totals", "Savings and expenses per category (totals and averages)"],
         ["savings_contribution_vs_goal", "Savings contributions vs. monthly goal"],
         ["debt_payoff_timeline", "Estimated payoff date by debt"],
         ["income_vs_outflow", "Income versus cash outflow"],
@@ -416,6 +417,7 @@
         visual("Interest vs. Principal", "stackedBar", "debt_interest_vs_principal", "rolling_12_months", "normal")
       ],
       trends: [
+        visual("Category Totals", "bar", "category_totals", "rolling_12_months", "wide"),
         visual("Income vs. Outflow", "bar", "income_vs_outflow", "rolling_12_months", "wide"),
         visual("Net Cash Flow", "line", "net_cash_flow_trend", "rolling_12_months", "normal", { color: "#3987e5" }),
         visual("Spending by Category", "area", "operating_spending_trend", "rolling_12_months", "normal", byCategory),
@@ -477,6 +479,10 @@
   APP.pages.visuals.categoryChecklist = function (selectedIds) {
     var container = APP.dom.el("div", "category-checklist");
     var selected = selectedIds || [];
+
+    container.appendChild(APP.ui.filterBox("Find a category…", function () {
+      return Array.prototype.slice.call(container.querySelectorAll(".category-option"));
+    }));
 
     APP.state.categories
       .filter(function (category) {

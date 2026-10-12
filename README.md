@@ -29,11 +29,15 @@ There is no build step and no server code: it's plain HTML, CSS and JavaScript.
 ## Features
 
 **Tracking and planning**
-- Transactions: income, expenses, savings contributions and spending paid from savings funds, with search, filters, CSV export, and CSV/XLSX import.
+- Transactions: income, expenses, savings contributions and spending paid from savings funds, with search, filters, CSV export, and CSV/XLSX import. Category pickers are searchable.
+- Kinds of income (paycheck, extra income, gift, interest, other) and **refunds**. A refund names the category it goes back to and lowers that category's spending instead of counting as income.
+- **Round-ups:** an expense can be rounded up to the next dollar, with the change saved into a round-up savings fund. Settings sets whether that's on by default.
+- **Free Money** is tracked as its own kind of outflow, separate from savings, in the summary cards and flow charts.
 - Monthly Plan: set expected income and a target for every category. The page shows how much income is still unassigned, lets you search and filter categories, groups them with subtotals, and shows progress on every row.
-- Savings funds with monthly and long-term goals, including estimated completion dates.
+- Savings funds with monthly and long-term goals. Give a goal a target date and the app tells you how much to save each month to hit it.
 - Debts with APR, minimum payments and payment tracking.
-- Salary planner for estimating take-home pay.
+- **Accounts:** a balance check that compares your budget with the money really in your accounts. Enter each bank account's and credit card's balance and which savings funds live in each. The app checks that every savings account holds exactly its funds, and that checking minus your card balances equals the funds kept there plus your available cash. Your money is tracked from the day you start: income and refunds add to it, expenses subtract, and moving money into funds or paying the card from checking are just transfers. When something doesn't match, it shows where and helps you fix it with an adjustment that doesn't affect your monthly numbers.
+- Paycheck estimate (on the Accounts page) for hourly or salaried pay on any schedule: each paycheck's hours and take-home (twice-a-month hourly checks are 80, 88 or 96 hours depending on the weekdays in the period), used for the Monthly Plan's expected income.
 
 **Dashboard**
 - Summary cards for income, spending, savings, debt payments, total outflow and net cash flow. Colors mean good or bad news: debt payments count as progress, and spending only turns red when it's over budget.
@@ -46,10 +50,13 @@ There is no build step and no server code: it's plain HTML, CSS and JavaScript.
   - Savings: goal progress rings, contributions vs. goal, savings rate, and fund balances.
   - Trends: income vs. outflow, net cash flow, spending by category over time, and this year vs. last year.
   - Line and area charts can show **each category as its own line** on top of the total.
-- Colors are checked for colorblind readability, and every chart has hover details.
+  - An **Avg** toggle on line, bar and heatmap visuals adds the period's average.
+  - Category totals: every category's total, monthly average and this month, split into spending, savings, Free Money and debt.
+- Colors are checked for colorblind readability. Tap a chart once for one point, again for the whole column, and a third time to close it. Scrolling on a phone never opens tooltips.
 
 **Everywhere**
 - Works on phones: every page fits a phone screen, and you can add it to your home screen like an app.
+- **Light and dark mode** (Settings → Appearance), or follow the device's setting. It's chosen separately on each device.
 - Works offline. With cloud sync, changes sync when you reconnect.
 
 ---
@@ -232,7 +239,7 @@ Firebase's free Spark plan includes 1 GiB of Firestore storage, 50,000 document 
 ## Using the app
 
 **Getting started**
-1. **Settings:** review the categories. Mark savings funds and debt categories, and add any categories of your own.
+1. **Settings:** review the categories. Mark savings funds and debt categories, and add any categories of your own. Categories with no transactions can be deleted; others can be archived.
 2. **Monthly Plan:** enter your expected monthly income, then give each category a target until *Left to assign* reaches $0. Spending targets are limits; savings and debt targets are what you plan to put in.
 3. **Transactions:** add transactions, or import a CSV/XLSX. To link a payment to a specific debt, add a **debt allocation** to it; the payoff estimates rely on this.
 4. **Savings & Goals** and **Debts:** set fund goals and add debt accounts. Update each debt's *confirmed balance* now and then so the estimates stay accurate.
@@ -324,7 +331,7 @@ start-budget-app.cmd / .sh  Local launchers (Windows / macOS & Linux)
 js/00-core.js               App namespace, default state, localStorage
 js/01-dom.js … 10-ui-*.js   DOM helpers, utilities, import/cleaning, model, analytics
 js/07-charts.js             Chart theme, palettes and chart types (gauge, sankey, waterfall, …)
-js/11-…17-page-*.js         Pages: Transactions, Monthly Plan, Savings, Debts, Salary, Settings
+js/11-…17-page-*.js         Pages: Transactions, Monthly Plan, Savings, Debts, Accounts (+ paycheck estimate), Settings
 js/18-page-visuals.js       Dashboard visual catalog, tabs, recommended layouts, editor
 js/19-page-advisor.js       Ollama advisor chat
 js/99-controller.js         Dashboard rendering, visual renderers, startup

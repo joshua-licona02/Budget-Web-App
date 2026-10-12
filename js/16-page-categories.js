@@ -200,6 +200,22 @@
       form.appendChild(field.root);
     });
 
+    // For savings funds, show what a target date means per month.
+    var goalHint = APP.pages.savings.goalHint(
+      eventualGoal,
+      eventualDate,
+      existing && existing.isSavingsFund ?
+        APP.model.savingsBalance(existing.id, APP.utils.month(new Date())) :
+        0
+    );
+
+    form.appendChild(goalHint);
+
+    savings.addEventListener("change", function () {
+      goalHint.style.display = savings.checked ? "" : "none";
+    });
+    goalHint.style.display = savings.checked ? "" : "none";
+
     form.appendChild(flags);
 
     form.addEventListener("submit", function (event) {
@@ -320,6 +336,62 @@
     APP.controller.commit();
   };
 
+  // A category can be deleted only when nothing uses it: no transactions and no debts.
+  // Budget targets and dashboard filters that mention it are cleaned up with it.
+  APP.pages.categories.usage = function (categoryId) {
+    return {
+      transactions: APP.state.transactions.filter(function (transaction) {
+        return transaction.categoryId === categoryId;
+      }).length,
+      debts: APP.state.debts.filter(function (debt) {
+        return debt.categoryId === categoryId;
+      }).length
+    };
+  };
+
+  APP.pages.categories.remove = function (categoryId) {
+    var category = APP.model.categories().byId[categoryId];
+    var usage = APP.pages.categories.usage(categoryId);
+
+    if (!category || usage.transactions || usage.debts) {
+      return;
+    }
+
+    if (!window.confirm("Delete the category \"" + category.name + "\"? Its budget targets will be removed too.")) {
+      return;
+    }
+
+    APP.state.categories = APP.state.categories.filter(function (item) {
+      return item.id !== categoryId;
+    });
+
+    APP.state.budgets.forEach(function (budget) {
+      budget.items = (budget.items || []).filter(function (item) {
+        return item.categoryId !== categoryId;
+      });
+    });
+
+    (APP.state.settings.dashboardVisuals || []).forEach(function (visual) {
+      visual.categoryIds = (visual.categoryIds || []).filter(function (id) {
+        return id !== categoryId;
+      });
+    });
+
+    Object.keys(APP.controller.visualRuntime || {}).forEach(function (key) {
+      var runtime = APP.controller.visualRuntime[key];
+      runtime.categoryIds = (runtime.categoryIds || []).filter(function (id) {
+        return id !== categoryId;
+      });
+    });
+
+    if (APP.state.settings.roundUp && APP.state.settings.roundUp.fundId === categoryId) {
+      APP.state.settings.roundUp.fundId = "";
+    }
+
+    APP.store.log("warning", "Deleted category: " + category.name + ".");
+    APP.controller.commit();
+  };
+
   APP.pages.categories.render = function (hostElement) {
   var root = hostElement || APP.dom.refs.pages.settings;
     var controls = APP.dom.el("div", "button-row");
@@ -335,9 +407,13 @@
 
     root.appendChild(APP.ui.panelHeader(
   "Categories",
-  "Manage categories, savings funds, debt categories, temporary categories, and organization groups. Category names remain simple in transactions and reports.",
+  "Manage categories, savings funds, debt categories, temporary categories, and organization groups. Categories with no transactions can be deleted; others can be archived.",
   controls
 ));
+
+    root.appendChild(APP.ui.filterBox("Find a category…", function () {
+      return Array.prototype.slice.call(root.querySelectorAll(".category-settings-row"));
+    }));
 
     APP.state.categories.slice().sort(function (a, b) {
       return a.name.localeCompare(b.name);
@@ -398,6 +474,21 @@ archive.addEventListener("click", function () {
 
 actions.appendChild(edit);
 actions.appendChild(archive);
+
+var usage = APP.pages.categories.usage(category.id);
+
+if (!usage.transactions && !usage.debts) {
+  var remove = APP.ui.button("Delete", "button-quiet danger");
+
+  remove.addEventListener("click", function () {
+    APP.pages.categories.remove(category.id);
+  });
+  actions.appendChild(remove);
+} else {
+  actions.title = "Used by " + (usage.transactions ?
+    usage.transactions + " transaction(s)" :
+    usage.debts + " debt(s)") + ", so it can be archived but not deleted.";
+}
 
 card.appendChild(nameCell);
 card.appendChild(groupCell);

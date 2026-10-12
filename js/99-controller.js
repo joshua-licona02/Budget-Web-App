@@ -10,7 +10,7 @@
     budget: ["Monthly Plan", "Expected income and category targets"],
     savings: ["Savings & Goals", "Monthly contributions, eventual savings goals, and target progress"],
     debts: ["Debt Tracking", "Confirmed balances, projected balances, and allocated payment history"],
-    salary: ["Salary Planner", "Manual payroll and withholding estimates"],
+    accounts: ["Accounts", "Check your budget against your real balances"],
     advisor: ["Ollama Advisor", "Optional local financial-planning analysis"],
     settings: ["Settings", "Local data and optional Ollama connection"]
   };
@@ -99,7 +99,8 @@
         categoryScope: visual.categoryScope || "all",
         categoryIds: Array.isArray(visual.categoryIds) ?
           visual.categoryIds.slice() :
-          []
+          [],
+        showAverage: Boolean(visual.showAverage)
       };
     }
 
@@ -122,7 +123,8 @@
       displayMode: runtime.displayMode,
       aggregationMode: runtime.aggregationMode,
       categoryScope: runtime.categoryScope,
-      categoryIds: runtime.categoryIds
+      categoryIds: runtime.categoryIds,
+      showAverage: runtime.showAverage
     };
   };
 
@@ -145,11 +147,7 @@
 
   APP.controller.sumTransactions = function (transactions, kinds) {
     return transactions.reduce(function (total, transaction) {
-      var kind = APP.model.classify(transaction);
-
-      return kinds.indexOf(kind) !== -1 ?
-        total + APP.utils.money(transaction.amount) :
-        total;
+      return total + APP.model.amountFor(transaction, kinds);
     }, 0);
   };
 
@@ -177,6 +175,11 @@
           ["savingsContribution"]
         ),
 
+        freeMoney: APP.controller.sumTransactions(
+          transactions,
+          ["freeMoneyContribution"]
+        ),
+
         debt: APP.controller.sumTransactions(
           transactions,
           ["debtPayment"]
@@ -186,6 +189,7 @@
       totals.outflow =
         totals.operating +
         totals.savings +
+        totals.freeMoney +
         totals.debt;
 
       totals.net =
@@ -221,6 +225,11 @@
           ["savingsContribution"]
         ),
 
+        freeMoney: APP.controller.sumTransactions(
+          transactions,
+          ["freeMoneyContribution"]
+        ),
+
         debt: APP.controller.sumTransactions(
           transactions,
           ["debtPayment"]
@@ -230,6 +239,7 @@
       totals.outflow =
         totals.operating +
         totals.savings +
+        totals.freeMoney +
         totals.debt;
 
       totals.net =
@@ -245,18 +255,14 @@
 
     APP.controller.transactionsForVisual(visual, months)
       .forEach(function (transaction) {
-        var kind = APP.model.classify(transaction);
+        var amount = APP.model.amountFor(transaction, kinds);
 
-        if (
-          kinds.indexOf(kind) === -1 ||
-          !transaction.categoryId
-        ) {
+        if (!amount || !transaction.categoryId) {
           return;
         }
 
         values[transaction.categoryId] =
-          (values[transaction.categoryId] || 0) +
-          APP.utils.money(transaction.amount);
+          (values[transaction.categoryId] || 0) + amount;
       });
 
     return Object.keys(values).map(function (categoryId) {
@@ -304,13 +310,12 @@
           ) {
             if (
               transaction.month !== month ||
-              transaction.categoryId !== categoryId ||
-              kinds.indexOf(APP.model.classify(transaction)) === -1
+              transaction.categoryId !== categoryId
             ) {
               return total;
             }
 
-            return total + APP.utils.money(transaction.amount);
+            return total + APP.model.amountFor(transaction, kinds);
           }, 0);
         })
       };
@@ -325,11 +330,9 @@
     APP.state.transactions.forEach(function (transaction) {
       var index = keys.indexOf(transaction[keyField]);
 
-      if (
-        index === -1 ||
-        kinds.indexOf(APP.model.classify(transaction)) === -1 ||
-        !APP.controller.matchesCategoryScope(transaction, visual)
-      ) {
+      var amount = index === -1 ? 0 : APP.model.amountFor(transaction, kinds);
+
+      if (!amount || !APP.controller.matchesCategoryScope(transaction, visual)) {
         return;
       }
 
@@ -341,7 +344,7 @@
         });
       }
 
-      buckets[id][index] += APP.utils.money(transaction.amount);
+      buckets[id][index] += amount;
     });
 
     var series = APP.state.categories.filter(function (category) {
@@ -496,7 +499,7 @@
     operating_spending_trend: { field: "operating", kinds: ["operatingExpense"] },
     total_outflow_trend: {
       field: "outflow",
-      kinds: ["operatingExpense", "savingsContribution", "debtPayment"]
+      kinds: APP.model.outflowKinds
     },
     net_cash_flow_trend: { field: "net", kinds: null },
     savings_contribution_trend: { field: "savings", kinds: ["savingsContribution"] },
@@ -611,7 +614,6 @@
 
     var options = APP.controller.chartOptions(visual, false, isArea);
 
-    options.interaction = { mode: "index", intersect: false };
     options.plugins.tooltip.itemSort = function (a, b) {
       return b.raw - a.raw;
     };
@@ -675,7 +677,7 @@
           return isDaily ? item.date : item.month;
         }),
         isDaily ? "date" : "month",
-        ["operatingExpense", "savingsContribution", "debtPayment"]
+        APP.model.outflowKinds
       ) :
       [];
 
@@ -698,15 +700,47 @@
         });
       });
     } else {
+      // Money moved into Free Money is its own segment so it reads differently from
+      // spending, savings and debt.
+      var freeMoneyValues = periods.map(function (item) {
+        return item.freeMoney;
+      });
+      var otherOutflow = outflowValues.map(function (value, index) {
+        return value - freeMoneyValues[index];
+      });
+      var outflowBase = outflowValues.reduce(function (sum, value) {
+        return sum + value;
+      }, 0) || 1;
+
+      function share(values) {
+        return visual.displayMode === "percent" ?
+          values.map(function (value) {
+            return value / outflowBase * 100;
+          }) :
+          values;
+      }
+
       datasets.push({
-        label: "Cash outflow",
-        data: APP.controller.valuesForDisplay(
-          outflowValues,
-          visual
-        ),
+        label: "Spending, savings & debt",
+        data: share(otherOutflow),
         backgroundColor: APP.charts.flow.spending,
+        borderColor: APP.charts.surface,
+        borderWidth: { top: 2 },
+        borderSkipped: false,
         stack: "outflow"
       });
+
+      if (freeMoneyValues.some(Boolean)) {
+        datasets.push({
+          label: "Free money",
+          data: share(freeMoneyValues),
+          backgroundColor: APP.charts.flow.freeMoney,
+          borderColor: APP.charts.surface,
+          borderWidth: { top: 2 },
+          borderSkipped: false,
+          stack: "outflow"
+        });
+      }
     }
 
     APP.charts.chart(root, key, {
@@ -721,11 +755,7 @@
           })),
         datasets: datasets
       },
-      options: APP.controller.chartOptions(
-        visual,
-        outflowSeries.length > 0,
-        false
-      )
+      options: APP.controller.chartOptions(visual, true, false)
     });
   };
 
@@ -766,6 +796,7 @@
       kinds = [
         "operatingExpense",
         "savingsContribution",
+        "freeMoneyContribution",
         "debtPayment"
       ];
     }
@@ -875,7 +906,7 @@
       y: {
         grid: { display: false },
         border: { display: false },
-        ticks: { color: "#c9d6e6" }
+        ticks: { color: APP.charts.ink.soft }
       }
     };
 
@@ -915,6 +946,7 @@
         [
           "operatingExpense",
           "savingsContribution",
+          "freeMoneyContribution",
           "debtPayment"
         ] :
         ["operatingExpense"];
@@ -1084,7 +1116,9 @@
       root,
       APP.controller.categoryPeriodSeries(visual, months, "month", kinds),
       monthNames,
-      APP.controller.flowColorForTopic(visual.topic)
+      APP.controller.flowColorForTopic(visual.topic),
+      null,
+      { showAverage: visual.showAverage }
     );
   };
 
@@ -1107,6 +1141,7 @@
       kinds = [
         "operatingExpense",
         "savingsContribution",
+        "freeMoneyContribution",
         "debtPayment"
       ];
     }
@@ -1119,17 +1154,15 @@
     var values = {};
 
     APP.state.transactions.forEach(function (transaction) {
-      if (
-        transaction.month !== selectedMonth ||
-        kinds.indexOf(APP.model.classify(transaction)) === -1 ||
-        !APP.controller.matchesCategoryScope(transaction, visual)
-      ) {
+      var amount = transaction.month === selectedMonth ?
+        APP.model.amountFor(transaction, kinds) :
+        0;
+
+      if (!amount || !APP.controller.matchesCategoryScope(transaction, visual)) {
         return;
       }
 
-      values[transaction.date] =
-        (values[transaction.date] || 0) +
-        APP.utils.money(transaction.amount);
+      values[transaction.date] = (values[transaction.date] || 0) + amount;
     });
 
     APP.charts.calendar(root, days.map(function (date) {
@@ -1138,7 +1171,7 @@
         day: Number(date.slice(8)),
         value: values[date] || 0
       };
-    }), color);
+    }), color, { showAverage: visual.showAverage });
   };
   // Spending budget for a month: operating categories only (savings funds and debt
   // categories have their own visuals), with pace based on how much of the month is over.
@@ -1179,7 +1212,7 @@
     var monthOpen = month >= currentMonth;
     var pendingIncome = monthOpen ? Math.max(0, expectedIncome - totals.income) : 0;
     var cashLeft = totals.income + pendingIncome - spent -
-      totals.savingsContributions - totals.debtPayments;
+      totals.savingsContributions - totals.freeMoney - totals.debtPayments;
     var limited = cashLeft < budgetLeft - 0.005;
     var remaining = limited ? cashLeft : budgetLeft;
 
@@ -1189,7 +1222,7 @@
     var offsets = [];
 
     if (limited) {
-      var savedExtra = totals.savingsContributions - targets.savings;
+      var savedExtra = totals.savingsContributions + totals.freeMoney - targets.savings;
       var debtExtra = totals.debtPayments - targets.debt;
       var incomeShort = monthOpen ? 0 : expectedIncome - totals.income;
       var overPlanned = targets.spending + targets.savings + targets.debt - expectedIncome;
@@ -1463,11 +1496,25 @@
       return months.indexOf(transaction.month) !== -1;
     });
 
+    var incomeByType = {};
+
+    all.forEach(function (transaction) {
+      if (APP.model.classify(transaction) === "income") {
+        var type = transaction.incomeType || "paycheck";
+        incomeByType[type] = (incomeByType[type] || 0) + APP.utils.money(transaction.amount);
+      }
+    });
+
     // Income usually has no category, so it is never narrowed by the category scope.
+    // Spending is net of refunds; grossSpending and refunds are kept for flow charts.
     return {
       income: APP.controller.sumTransactions(all, ["income"]),
+      incomeByType: incomeByType,
+      refunds: APP.controller.sumTransactions(scoped, ["refund"]),
       spending: APP.controller.sumTransactions(scoped, ["operatingExpense"]),
+      grossSpending: APP.controller.sumTransactions(scoped, ["grossSpending"]),
       savings: APP.controller.sumTransactions(scoped, ["savingsContribution"]),
+      freeMoney: APP.controller.sumTransactions(scoped, ["freeMoneyContribution"]),
       debt: APP.controller.sumTransactions(scoped, ["debtPayment"])
     };
   };
@@ -1486,18 +1533,24 @@
     var totals = APP.controller.flowTotals(visual, months);
     var steps = [{ label: "Income", value: totals.income, kind: "income" }];
 
+    // Refunds come in as their own step, so spending is shown before refunds.
+    if (totals.refunds) {
+      steps.push({ label: "Refunds", value: totals.refunds, kind: "refund" });
+    }
+
     if (visual.aggregationMode === "byCategory") {
       APP.controller.foldBreakdown(
-        APP.controller.categoryBreakdown(visual, months, ["operatingExpense"]),
+        APP.controller.categoryBreakdown(visual, months, ["grossSpending"]),
         7
       ).forEach(function (item) {
         steps.push({ label: item.label, value: -item.value, kind: "spending" });
       });
     } else {
-      steps.push({ label: "Spending", value: -totals.spending, kind: "spending" });
+      steps.push({ label: "Spending", value: -totals.grossSpending, kind: "spending" });
     }
 
     steps.push({ label: "Savings", value: -totals.savings, kind: "savings" });
+    steps.push({ label: "Free money", value: -totals.freeMoney, kind: "freeMoney" });
     steps.push({ label: "Debt payments", value: -totals.debt, kind: "debt" });
 
     steps = steps.filter(function (step) {
@@ -1506,7 +1559,7 @@
 
     steps.push({
       label: "Net cash flow",
-      value: totals.income - totals.spending - totals.savings - totals.debt,
+      value: totals.income - totals.spending - totals.savings - totals.freeMoney - totals.debt,
       kind: "total"
     });
 
@@ -1524,7 +1577,9 @@
     );
 
     var totals = APP.controller.flowTotals(visual, months);
-    var outflow = totals.spending + totals.savings + totals.debt;
+    // Refunds are drawn as a source, so spending here is before refunds.
+    var inflow = totals.income + totals.refunds;
+    var outflow = totals.grossSpending + totals.savings + totals.freeMoney + totals.debt;
     var byCategory = visual.aggregationMode === "byCategory";
 
     function children(kinds) {
@@ -1536,25 +1591,45 @@
         [];
     }
 
-    var sources = [{ label: "Income", value: totals.income, color: APP.charts.flow.income }];
+    // One source per kind of income, then refunds, then any shortfall.
+    var sources = APP.model.incomeTypes.filter(function (type) {
+      return type[0] !== "refund" && totals.incomeByType[type[0]];
+    }).map(function (type) {
+      return {
+        label: APP.model.incomeTypeLabel(type[0]),
+        value: totals.incomeByType[type[0]],
+        color: APP.charts.incomeShades[type[0]]
+      };
+    });
 
-    if (outflow > totals.income) {
+    if (totals.refunds) {
+      sources.push({ label: "Refunds", value: totals.refunds, color: APP.charts.incomeShades.refund });
+    }
+
+    if (outflow > inflow) {
       sources.push({
         label: "Shortfall",
-        value: outflow - totals.income,
+        value: outflow - inflow,
         color: APP.charts.flow.shortfall
       });
     }
 
+    // Free money sits between spending and savings, away from the similar debt blue.
     APP.charts.sankey(root, {
-      base: totals.income || outflow,
+      base: inflow || outflow,
       sources: sources,
       groups: [
         {
-          label: "Spending",
-          value: totals.spending,
+          label: totals.refunds ? "Spending (before refunds)" : "Spending",
+          value: totals.grossSpending,
           color: APP.charts.flow.spending,
-          children: children(["operatingExpense"])
+          children: children(["grossSpending"])
+        },
+        {
+          label: "Free money",
+          value: totals.freeMoney,
+          color: APP.charts.flow.freeMoney,
+          children: []
         },
         {
           label: "Savings",
@@ -1570,7 +1645,7 @@
         },
         {
           label: "Leftover cash",
-          value: Math.max(0, totals.income - outflow),
+          value: Math.max(0, inflow - outflow),
           color: APP.charts.flow.remaining,
           children: []
         }
@@ -1593,14 +1668,13 @@
       APP.state.transactions.forEach(function (transaction) {
         if (
           dates.indexOf(transaction.date) === -1 ||
-          APP.model.classify(transaction) !== "operatingExpense" ||
           !APP.controller.matchesCategoryScope(transaction, visual)
         ) {
           return;
         }
 
-        byDate[transaction.date] =
-          (byDate[transaction.date] || 0) + APP.utils.money(transaction.amount);
+        byDate[transaction.date] = (byDate[transaction.date] || 0) +
+          APP.model.kindAmount(transaction, "operatingExpense");
       });
 
       return APP.controller.cumulative(dates.map(function (date) {
@@ -2194,6 +2268,9 @@
         detail: hasGoal ?
           (fund.balance >= fund.eventualGoal ?
             "Goal reached" :
+            fund.targetPlan && fund.targetPlan.months > 0 ?
+              "Save " + APP.utils.currency(fund.targetPlan.perMonth) + "/mo to reach it by " +
+                APP.controller.monthName(fund.targetPlan.targetMonth) :
             fund.estimatedCompletionMonth ?
               "On track for " + APP.controller.monthName(fund.estimatedCompletionMonth) :
               "Set a monthly goal to get a date") :
@@ -2327,7 +2404,61 @@
     });
   };
 
+  // Every category's total, monthly average and this month for the chosen period.
+  APP.controller.renderCategoryTotals = function (root, visual, selectedMonth) {
+    var currentMonth = APP.utils.month(new Date());
+    var months = APP.controller.timelineMonths(visual.timelineMode, selectedMonth)
+      .filter(function (month) {
+        return month <= currentMonth;
+      });
+
+    if (!months.length) {
+      months = [selectedMonth];
+    }
+
+    var monthIndex = months.indexOf(selectedMonth);
+
+    function section(label, color, kinds) {
+      return {
+        label: label,
+        color: color,
+        rows: APP.controller.categoryPeriodSeries(visual, months, "month", kinds)
+          .map(function (series) {
+            var total = series.values.reduce(function (sum, value) {
+              return sum + value;
+            }, 0);
+
+            return {
+              label: series.label,
+              total: total,
+              average: total / months.length,
+              current: monthIndex === -1 ? 0 : series.values[monthIndex]
+            };
+          })
+          .filter(function (row) {
+            return Math.abs(row.total) >= 0.005;
+          })
+          .sort(function (a, b) {
+            return b.total - a.total;
+          })
+      };
+    }
+
+    APP.charts.breakdownTable(root, [
+      section("Spending (after refunds)", APP.charts.flow.spending, ["operatingExpense"]),
+      section("Savings", APP.charts.flow.savings, ["savingsContribution"]),
+      section("Free money", APP.charts.flow.freeMoney, ["freeMoneyContribution"]),
+      section("Debt payments", APP.charts.flow.debt, ["debtPayment"])
+    ], {
+      averageLabel: months.length > 1 ? "Avg / month (" + months.length + ")" : "Avg / month",
+      currentLabel: APP.controller.monthLabels([selectedMonth])[0]
+    });
+  };
+
   APP.controller.customRenderers = {
+    category_totals: function (root, key, visual, month) {
+      APP.controller.renderCategoryTotals(root, visual, month);
+    },
     debt_total_paydown: function (root, key, visual) {
       APP.controller.renderDebtPaydown(root, key, visual);
     },
@@ -2366,6 +2497,7 @@
   // Which inline switches each custom visual responds to. Topics not listed here use the
   // chart-type defaults in createVisualControls.
   APP.controller.customControls = {
+    category_totals: { scope: true },
     debt_total_paydown: {},
     debt_balance_trend: { aggregation: true },
     debt_interest_vs_principal: {},
@@ -2383,6 +2515,7 @@
 
   // Custom visuals whose content is a list or grid that sizes itself.
   APP.controller.fitContentTopics = [
+    "category_totals",
     "category_budget_status",
     "debt_payoff_timeline",
     "debt_strategy_comparison",
@@ -2390,7 +2523,152 @@
     "savings_contribution_vs_goal"
   ];
 
-  APP.controller.renderVisual = function (
+  // Visuals where an average across the timeline means something.
+  APP.controller.averageTopics = [
+    "income_trend",
+    "operating_spending_trend",
+    "total_outflow_trend",
+    "net_cash_flow_trend",
+    "savings_contribution_trend",
+    "income_vs_outflow",
+    "monthly_totals",
+    "operating_category_stacked",
+    "savings_fund_stacked",
+    "cash_outflow_stacked",
+    "debt_interest_vs_principal",
+    "year_over_year_spending",
+    "operating_category_heatmap",
+    "savings_fund_heatmap",
+    "debt_category_heatmap",
+    "daily_operating_spending",
+    "daily_savings_contributions",
+    "daily_cash_outflow",
+    "daily_income"
+  ];
+
+  APP.controller.canAverage = function (visual) {
+    return APP.controller.averageTopics.indexOf(visual.topic) !== -1 &&
+      ["pie", "doughnut", "scatter"].indexOf(visual.chartType) === -1;
+  };
+
+  // Adds dotted average lines to a line or bar chart: one for the total when there is a
+  // Total line, one per stack for stacked bars, otherwise one per series.
+  APP.controller.addAverageLines = function (chart, visual) {
+    if (!chart || ["line", "bar"].indexOf(chart.config.type) === -1 ||
+        chart.options.indexAxis === "y") {
+      return;
+    }
+
+    var datasets = chart.data.datasets.filter(function (dataset) {
+      return !dataset.isAverage;
+    });
+    var stacked = chart.options.scales && chart.options.scales.y && chart.options.scales.y.stacked;
+    var total = datasets.filter(function (dataset) {
+      return dataset.label === "Total";
+    })[0];
+    var groups = [];
+
+    if (total) {
+      groups.push({ name: "", members: [total], color: APP.charts.totalColor });
+    } else if (stacked) {
+      var byStack = {};
+
+      datasets.forEach(function (dataset) {
+        var key = dataset.stack || "all";
+
+        if (!byStack[key]) {
+          byStack[key] = { name: key === "all" ? "" : key, members: [], color: APP.charts.totalColor };
+          groups.push(byStack[key]);
+        }
+
+        byStack[key].members.push(dataset);
+      });
+
+      groups.forEach(function (group) {
+        if (group.members.length === 1) {
+          group.color = group.members[0].borderColor || group.members[0].backgroundColor;
+        }
+      });
+    } else {
+      datasets.forEach(function (dataset) {
+        groups.push({
+          name: datasets.length > 1 ? dataset.label : "",
+          members: [dataset],
+          color: typeof dataset.borderColor === "string" ? dataset.borderColor : dataset.backgroundColor
+        });
+      });
+    }
+
+    var length = chart.data.labels.length;
+    var percent = visual.displayMode === "percent";
+    var perDay = visual.timelineMode === "daily_selected_month";
+
+    groups.forEach(function (group, index) {
+      var values = [];
+
+      for (var position = 0; position < length; position += 1) {
+        var known = false;
+        var sum = 0;
+
+        group.members.forEach(function (dataset) {
+          var raw = dataset.data[position];
+          var value = raw && typeof raw === "object" ? raw[1] - raw[0] : raw;
+
+          if (value !== null && value !== undefined && !Number.isNaN(value)) {
+            known = true;
+            sum += Number(value);
+          }
+        });
+
+        if (known) {
+          values.push(sum);
+        }
+      }
+
+      if (values.length < 2) {
+        return;
+      }
+
+      var average = values.reduce(function (a, b) {
+        return a + b;
+      }, 0) / values.length;
+
+      var text = percent ? average.toFixed(1) + "%" : APP.charts.compact(average);
+
+      chart.data.datasets.push({
+        type: "line",
+        isAverage: true,
+        label: "Avg" + (group.name ? " " + group.name.toLowerCase() : "") +
+          (perDay ? "/day" : "") + " " + text,
+        data: chart.data.labels.map(function () {
+          return average;
+        }),
+        borderColor: typeof group.color === "string" ? group.color : APP.charts.totalColor,
+        backgroundColor: typeof group.color === "string" ? group.color : APP.charts.totalColor,
+        borderDash: [2, 4],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        stack: "average-" + index,
+        order: -1
+      });
+    });
+
+    chart.update("none");
+  };
+
+  APP.controller.renderVisual = function (root, savedVisual, selectedMonth) {
+    APP.controller.renderVisualContent(root, savedVisual, selectedMonth);
+
+    var visual = APP.controller.effectiveVisual(savedVisual);
+
+    if (visual.showAverage && APP.controller.canAverage(visual)) {
+      APP.controller.addAverageLines(APP.charts.instances[visual.id], visual);
+    }
+  };
+
+  APP.controller.renderVisualContent = function (
     root,
     savedVisual,
     selectedMonth
@@ -2619,11 +2897,14 @@
       "button-primary"
     );
 
+    // With a search typed, "Select all" picks only the categories that match it.
     all.addEventListener("click", function () {
       Array.prototype.slice.call(
         list.querySelectorAll("input[type='checkbox']")
       ).forEach(function (checkbox) {
-        checkbox.checked = true;
+        if (!checkbox.closest("label").hidden) {
+          checkbox.checked = true;
+        }
       });
     });
 
@@ -2664,6 +2945,9 @@
     actions.appendChild(cancel);
     actions.appendChild(apply);
 
+    content.appendChild(APP.ui.filterBox("Find a category…", function () {
+      return Array.prototype.slice.call(list.querySelectorAll(".visual-category-option"));
+    }));
     content.appendChild(list);
     content.appendChild(actions);
 
@@ -2789,6 +3073,7 @@
       savedVisual.aggregationMode = runtime.aggregationMode;
       savedVisual.categoryScope = runtime.categoryScope;
       savedVisual.categoryIds = runtime.categoryIds.slice();
+      savedVisual.showAverage = runtime.showAverage;
 
       APP.store.log(
         "success",
@@ -2830,6 +3115,19 @@
     if (usesScope) {
       controls.appendChild(categoryMode);
       controls.appendChild(chooseCategories);
+    }
+
+    if (APP.controller.canAverage(savedVisual)) {
+      var average = APP.ui.button("Avg", "button-quiet visual-average-toggle");
+
+      average.title = "Show the average for this period";
+      average.setAttribute("aria-pressed", runtime.showAverage ? "true" : "false");
+      average.classList.toggle("active", runtime.showAverage);
+      average.addEventListener("click", function () {
+        runtime.showAverage = !runtime.showAverage;
+        APP.controller.renderDashboard();
+      });
+      controls.appendChild(average);
     }
 
     if (!controls.children.length) {
@@ -3101,10 +3399,10 @@
         "Operating spending",
         totals.operating,
         pace.budget && totals.operating > pace.budget ? "danger" : "",
-        pace.budget ?
+        (pace.budget ?
           percentOf(totals.operating, pace.budget) + " of " +
             APP.charts.compact(pace.budget) + " budget" :
-          ""
+          "") + (totals.refunds ? " · after " + APP.charts.compact(totals.refunds) + " refunds" : "")
       ],
       [
         "Savings contributions",
@@ -3114,6 +3412,12 @@
           percentOf(totals.savingsContributions, savingsGoal) + " of " +
             APP.charts.compact(savingsGoal) + " goal" :
           ""
+      ],
+      [
+        "Free money",
+        totals.freeMoney,
+        "freemoney",
+        "Moved into Free Money"
       ],
       [
         "Debt payments",
@@ -3136,7 +3440,13 @@
             percentOf(totals.netCashFlow, totals.income) + " of income kept") :
           ""
       ]
-    ].forEach(function (item) {
+    ].filter(function (item) {
+      // Only show the Free money card for budgets that have a Free Money fund.
+      return item[2] !== "freemoney" || item[1] > 0 ||
+        APP.state.categories.some(function (category) {
+          return !category.archived && APP.model.isFreeMoney(category);
+        });
+    }).forEach(function (item) {
       summaryRoot.appendChild(
         APP.ui.currencyCard(item[0], item[1], item[2], item[3])
       );
@@ -3479,7 +3789,7 @@
     APP.pages.budget.render();
     APP.pages.savings.render();
     APP.pages.debts.render();
-    APP.pages.salary.render();
+    APP.pages.accounts.render();
     APP.pages.advisor.render();
     APP.pages.settings.render();
   };
@@ -3676,6 +3986,11 @@
   // loading data another device saved.
   APP.controller.normalizeState = function () {
     APP.model.initialize();
+
+    // The Salary Planner became the Accounts page.
+    if (APP.state.settings.activeView === "salary") {
+      APP.state.settings.activeView = "accounts";
+    }
     APP.model.migrateTransactions();
 
     if (!APP.state.settings.ollama) {
@@ -3705,10 +4020,57 @@
     }
   };
 
+  APP.controller.resolvedTheme = function () {
+    var choice = APP.state.settings.theme || "system";
+
+    if (choice === "light" || choice === "dark") {
+      return choice;
+    }
+
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ?
+      "light" :
+      "dark";
+  };
+
+  APP.controller.applyTheme = function () {
+    var theme = APP.controller.resolvedTheme();
+    var themeColor = document.querySelector('meta[name="theme-color"]');
+    var colorScheme = document.querySelector('meta[name="color-scheme"]');
+
+    document.documentElement.dataset.theme = theme;
+
+    if (themeColor) {
+      themeColor.content = theme === "light" ? "#f3f5f9" : "#09111c";
+    }
+
+    if (colorScheme) {
+      colorScheme.content = theme;
+    }
+
+    try {
+      window.localStorage.setItem("personalBudgetDashboard.theme", theme);
+    } catch (error) {
+      // Storage blocked: the theme still applies for this visit.
+    }
+
+    APP.charts.setTheme(theme);
+  };
+
   APP.controller.init = function () {
     APP.dom.init();
     APP.store.load();
     APP.controller.normalizeState();
+    APP.controller.applyTheme();
+
+    // "Match this device" follows the system setting as it changes.
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function () {
+        if ((APP.state.settings.theme || "system") === "system") {
+          APP.controller.applyTheme();
+          APP.controller.renderAll();
+        }
+      });
+    }
 
     APP.store.log("info", "Budget dashboard initialized.");
 

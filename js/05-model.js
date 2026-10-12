@@ -91,9 +91,23 @@
         category.eventualSavingsGoalDate || "";
       category.createdAt =
         category.createdAt || new Date().toISOString();
+      // Corrections from the account balance check: they change a fund's balance
+      // without counting as saving or spending in any month.
+      category.adjustments = Array.isArray(category.adjustments) ? category.adjustments : [];
     });
 
     APP.model.ensureFreeMoneyFund();
+
+    // Real bank and credit card accounts, and when the balance check started.
+    APP.state.accounts = Array.isArray(APP.state.accounts) ? APP.state.accounts : [];
+    APP.state.reconcile = Object.assign({
+      baselineDate: "",
+      baselineLiquid: 0,
+      cashAdjustments: []
+    }, APP.state.reconcile || {});
+    APP.state.reconcile.cashAdjustments = Array.isArray(APP.state.reconcile.cashAdjustments) ?
+      APP.state.reconcile.cashAdjustments :
+      [];
 
     APP.state.transactions = Array.isArray(APP.state.transactions) ?
       APP.state.transactions :
@@ -302,6 +316,11 @@
       errors.push("Select a category for Expense or Savings.");
     }
 
+    if (transaction.type === "income" && transaction.incomeType === "refund" &&
+        (!category || category.isSavingsFund || category.isDebtCategory)) {
+      errors.push("Choose the spending category this refund goes back to.");
+    }
+
     if (transaction.type === "savings" &&
         (!category || !category.isSavingsFund)) {
       errors.push(
@@ -350,6 +369,32 @@
     return errors;
   };
 
+  // Kinds of income. A refund names the spending category it goes back to and lowers that
+  // category's spending instead of counting as income.
+  APP.model.incomeTypes = [
+    ["paycheck", "Paycheck"],
+    ["extra", "Extra income (bonus, side job)"],
+    ["refund", "Refund"],
+    ["gift", "Gift"],
+    ["interest", "Interest or dividends"],
+    ["other", "Other income"]
+  ];
+
+  APP.model.incomeTypeLabel = function (type) {
+    var match = APP.model.incomeTypes.filter(function (item) {
+      return item[0] === (type || "paycheck");
+    })[0];
+
+    return match ? match[1].replace(/ \(.*\)$/, "") : "Income";
+  };
+
+  // Free Money is a savings fund for unplanned spending money. Putting money into it is
+  // tracked as its own kind of outflow so it isn't mixed in with real savings.
+  APP.model.isFreeMoney = function (category) {
+    return Boolean(category) && (category.isFreeMoney ||
+      APP.utils.header(category.name) === "free money");
+  };
+
   APP.model.classify = function (transaction) {
     var category = APP.model.categories().byId[transaction.categoryId];
 
@@ -358,11 +403,11 @@
       [];
 
     if (transaction.type === "income") {
-      return "income";
+      return transaction.incomeType === "refund" && category ? "refund" : "income";
     }
 
     if (transaction.type === "savings") {
-      return "savingsContribution";
+      return APP.model.isFreeMoney(category) ? "freeMoneyContribution" : "savingsContribution";
     }
 
     if (allocations.length) {
@@ -379,6 +424,41 @@
 
     return "operatingExpense";
   };
+
+  // How much a transaction counts toward one kind of money. Refunds count against
+  // operating spending, so a category's spending is what was spent minus what came back.
+  APP.model.kindAmount = function (transaction, kind) {
+    var classified = APP.model.classify(transaction);
+    var amount = APP.utils.money(transaction.amount);
+
+    if (classified === kind) {
+      return amount;
+    }
+
+    if (kind === "operatingExpense" && classified === "refund") {
+      return -amount;
+    }
+
+    // Spending before refunds, for charts that show refunds as their own inflow.
+    if (kind === "grossSpending" && classified === "operatingExpense") {
+      return amount;
+    }
+
+    return 0;
+  };
+
+  APP.model.amountFor = function (transaction, kinds) {
+    return kinds.reduce(function (total, kind) {
+      return total + APP.model.kindAmount(transaction, kind);
+    }, 0);
+  };
+
+  APP.model.outflowKinds = [
+    "operatingExpense",
+    "savingsContribution",
+    "freeMoneyContribution",
+    "debtPayment"
+  ];
 
   APP.model.monthTransactions = function (month) {
     return APP.state.transactions.filter(function (transaction) {
@@ -442,6 +522,12 @@
 
       if (transaction.type === "expense") {
         balance -= APP.utils.money(transaction.amount);
+      }
+    });
+
+    (category.adjustments || []).forEach(function (adjustment) {
+      if (String(adjustment.date || "").slice(0, 7) <= throughMonth) {
+        balance += APP.utils.money(adjustment.amount);
       }
     });
 
