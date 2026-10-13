@@ -11,6 +11,7 @@
       refunds: 0,
       savingsContributions: 0,
       freeMoney: 0,
+      roundUps: 0,
       savingsWithdrawals: 0,
       debtPayments: 0,
       cashOutflow: 0,
@@ -43,6 +44,10 @@
         totals.freeMoney += amount;
       }
 
+      if (kind === "roundUpContribution") {
+        totals.roundUps += amount;
+      }
+
       if (kind === "savingsWithdrawal") {
         totals.savingsWithdrawals += amount;
       }
@@ -56,6 +61,7 @@
       totals.operating +
       totals.savingsContributions +
       totals.freeMoney +
+      totals.roundUps +
       totals.debtPayments;
 
     totals.netCashFlow =
@@ -93,7 +99,8 @@
         activity.refunds += amount;
       }
 
-      if (kind === "savingsContribution" || kind === "freeMoneyContribution") {
+      if (kind === "savingsContribution" || kind === "freeMoneyContribution" ||
+          kind === "roundUpContribution") {
         activity.contributions += amount;
       }
 

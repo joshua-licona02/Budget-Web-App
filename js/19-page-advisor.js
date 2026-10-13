@@ -55,6 +55,7 @@
       refunds: round(totals.refunds),
       savingsContributions: round(totals.savingsContributions),
       movedToFreeMoney: round(totals.freeMoney),
+      roundUpSavings: round(totals.roundUps),
       savingsWithdrawals: round(totals.savingsWithdrawals),
       debtPayments: round(totals.debtPayments),
       totalCashOutflow: round(totals.cashOutflow),

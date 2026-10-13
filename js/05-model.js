@@ -407,6 +407,12 @@
     }
 
     if (transaction.type === "savings") {
+      // Round-ups are saved change from rounding an expense up; they get their own kind
+      // so they show separately from regular saving.
+      if (transaction.roundUpFor) {
+        return "roundUpContribution";
+      }
+
       return APP.model.isFreeMoney(category) ? "freeMoneyContribution" : "savingsContribution";
     }
 
@@ -457,6 +463,7 @@
     "operatingExpense",
     "savingsContribution",
     "freeMoneyContribution",
+    "roundUpContribution",
     "debtPayment"
   ];
 
