@@ -1228,7 +1228,9 @@
 
     var planned = targets.spending;
     var totals = APP.analytics.month(month);
-    var spent = totals.operating;
+    // Round-ups come out of your spending money, so they count against the overall
+    // spending budget (category budgets still see only the purchase price).
+    var spent = totals.operating + totals.roundUps;
     var days = APP.controller.timelineDays(month).length;
     var currentMonth = APP.utils.month(new Date());
     var day = month === currentMonth ? new Date().getDate() : month < currentMonth ? days : 0;
@@ -1242,7 +1244,7 @@
     var monthOpen = month >= currentMonth;
     var pendingIncome = monthOpen ? Math.max(0, expectedIncome - totals.income) : 0;
     var cashLeft = totals.income + pendingIncome - spent -
-      totals.savingsContributions - totals.freeMoney - totals.roundUps - totals.debtPayments;
+      totals.savingsContributions - totals.freeMoney - totals.debtPayments;
     var limited = cashLeft < budgetLeft - 0.005;
     var remaining = limited ? cashLeft : budgetLeft;
 
@@ -1252,7 +1254,7 @@
     var offsets = [];
 
     if (limited) {
-      var savedExtra = totals.savingsContributions + totals.freeMoney + totals.roundUps - targets.savings;
+      var savedExtra = totals.savingsContributions + totals.freeMoney - targets.savings;
       var debtExtra = totals.debtPayments - targets.debt;
       var incomeShort = monthOpen ? 0 : expectedIncome - totals.income;
       var overPlanned = targets.spending + targets.savings + targets.debt - expectedIncome;
@@ -1314,6 +1316,7 @@
       budget: planned,
       targets: targets,
       spent: spent,
+      roundUps: totals.roundUps,
       budgetLeft: budgetLeft,
       cashLeft: cashLeft,
       pendingIncome: pendingIncome,
@@ -1350,7 +1353,8 @@
     var consumed = Math.max(0, pace.budget - pace.remaining);
 
     var stats = APP.charts.statRow([
-      ["Spent", APP.utils.currency(pace.spent)],
+      ["Spent", APP.utils.currency(pace.spent),
+        pace.roundUps ? "incl. " + APP.utils.currency(pace.roundUps) + " round-ups" : ""],
       pace.limited ?
         ["Budget left", APP.utils.currency(pace.budgetLeft), "Cash left: " + APP.utils.currency(pace.cashLeft)] :
         ["Budget", APP.utils.currency(pace.budget)],
@@ -1394,7 +1398,8 @@
       marker: pace.day < pace.days ? pace.expected : undefined,
       markerLabel: "On pace: " + APP.utils.currency(pace.expected),
       valueText: headline,
-      detailText: APP.utils.currency(pace.spent) + " of " +
+      detailText: APP.utils.currency(pace.spent) +
+        (pace.roundUps ? " (incl. " + APP.utils.currency(pace.roundUps) + " round-ups)" : "") + " of " +
         APP.utils.currency(pace.budget) + " spent (" + used + "%)",
       note: notes.join(" ") + (pace.day < pace.days ? " The tick marks where spending would be on pace." : ""),
       extra: stats
@@ -1711,8 +1716,9 @@
           return;
         }
 
+        // Round-ups count against the overall spending budget, as on the gauge.
         byDate[transaction.date] = (byDate[transaction.date] || 0) +
-          APP.model.kindAmount(transaction, "operatingExpense");
+          APP.model.amountFor(transaction, ["operatingExpense", "roundUpContribution"]);
       });
 
       return APP.controller.cumulative(dates.map(function (date) {
