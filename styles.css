@@ -1292,3 +1292,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
 .pay-settings summary{cursor:pointer;font-weight:700;padding:6px 0}
 .account-funds .category-checklist{max-height:220px;overflow:auto}
 @media (max-width:720px){.adjustment-row{grid-template-columns:56px minmax(0,1fr) auto}.adjustment-row .button{grid-column:3}}
+
+/* Round-ups: their own kind of saving */
+.summary-card.roundup{border-color:rgba(125,216,176,.5);background:linear-gradient(145deg,var(--tint-good),var(--surface))}
+.summary-card.roundup strong{color:var(--good-text)}
+.round-up-note{display:block;margin-top:2px;color:var(--good-text);font-size:.72rem;font-weight:600}

@@ -38,7 +38,9 @@
     shortfall: "#e66767",
     // Violet separates clearly from spending orange, which it sits beside in outflow bars.
     // It is close to debt blue, so diagrams keep the two apart and label both.
-    freeMoney: "#9085e9"
+    freeMoney: "#9085e9",
+    // A lighter shade of savings green: round-ups are savings, shown on their own.
+    roundUp: "#7dd8b0"
   };
 
   // Income sources are neutrals told apart by lightness and always labelled, so the
@@ -231,7 +233,8 @@
       categoryPalette: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
       flow: {
         income: "#c3cfdd", spending: "#d95926", savings: "#199e70", debt: "#3987e5",
-        remaining: "#6b7c93", shortfall: "#e66767", freeMoney: "#9085e9"
+        remaining: "#6b7c93", shortfall: "#e66767", freeMoney: "#9085e9",
+        roundUp: "#7dd8b0"
       },
       incomeShades: {
         paycheck: "#c3cfdd", extra: "#a6b6c9", gift: "#8d9fb5",
@@ -251,7 +254,8 @@
       categoryPalette: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
       flow: {
         income: "#64748b", spending: "#eb6834", savings: "#1baf7a", debt: "#2a78d6",
-        remaining: "#94a3b8", shortfall: "#e34948", freeMoney: "#4a3aa7"
+        remaining: "#94a3b8", shortfall: "#e34948", freeMoney: "#4a3aa7",
+        roundUp: "#0b6b4a"
       },
       incomeShades: {
         paycheck: "#64748b", extra: "#7b8aa0", gift: "#8e9cb1",

@@ -16,16 +16,16 @@
       return "Refund";
     }
 
+    if (kind === "roundUpContribution") {
+      return "Round-up savings";
+    }
+
     if (kind === "savingsContribution") {
       return "Savings contribution";
     }
 
     if (kind === "freeMoneyContribution") {
       return "Moved to Free Money";
-    }
-
-    if (transaction.roundUpFor) {
-      return "Round-up savings";
     }
 
     if (kind === "savingsWithdrawal") {
@@ -50,7 +50,8 @@
       };
     }
 
-    if (kind === "savingsContribution" || kind === "freeMoneyContribution") {
+    if (kind === "savingsContribution" || kind === "freeMoneyContribution" ||
+        kind === "roundUpContribution") {
       return {
         typeClass: "transaction-savings",
         amountClass: "money-savings",
@@ -82,6 +83,14 @@
   };
 
   APP.tables.transactions = function (transactions, options) {
+    var roundUpsById = {};
+
+    APP.state.transactions.forEach(function (item) {
+      if (item.roundUpFor) {
+        roundUpsById[item.id] = item;
+      }
+    });
+
     var config = options || {};
     var categories = APP.model.categories().byId;
     var wrap = APP.dom.el(
@@ -139,11 +148,21 @@
         APP.tables.transactionType(transaction)
       ));
 
-      row.appendChild(APP.dom.el(
+      var amountCell = APP.dom.el(
         "td",
         tone.amountClass,
         tone.sign + APP.utils.currency(transaction.amount)
-      ));
+      );
+
+      // An expense that was rounded up shows the change it saved.
+      var roundUp = transaction.roundUpId ? roundUpsById[transaction.roundUpId] : null;
+
+      if (roundUp) {
+        amountCell.appendChild(APP.dom.el("span", "round-up-note",
+          "+" + APP.utils.currency(roundUp.amount) + " rounded up"));
+      }
+
+      row.appendChild(amountCell);
 
       row.appendChild(APP.dom.el(
         "td",

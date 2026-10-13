@@ -180,6 +180,11 @@
           ["freeMoneyContribution"]
         ),
 
+        roundUps: APP.controller.sumTransactions(
+          transactions,
+          ["roundUpContribution"]
+        ),
+
         debt: APP.controller.sumTransactions(
           transactions,
           ["debtPayment"]
@@ -190,6 +195,7 @@
         totals.operating +
         totals.savings +
         totals.freeMoney +
+        totals.roundUps +
         totals.debt;
 
       totals.net =
@@ -230,6 +236,11 @@
           ["freeMoneyContribution"]
         ),
 
+        roundUps: APP.controller.sumTransactions(
+          transactions,
+          ["roundUpContribution"]
+        ),
+
         debt: APP.controller.sumTransactions(
           transactions,
           ["debtPayment"]
@@ -240,6 +251,7 @@
         totals.operating +
         totals.savings +
         totals.freeMoney +
+        totals.roundUps +
         totals.debt;
 
       totals.net =
@@ -705,8 +717,11 @@
       var freeMoneyValues = periods.map(function (item) {
         return item.freeMoney;
       });
+      var roundUpValues = periods.map(function (item) {
+        return item.roundUps;
+      });
       var otherOutflow = outflowValues.map(function (value, index) {
-        return value - freeMoneyValues[index];
+        return value - freeMoneyValues[index] - roundUpValues[index];
       });
       var outflowBase = outflowValues.reduce(function (sum, value) {
         return sum + value;
@@ -729,6 +744,18 @@
         borderSkipped: false,
         stack: "outflow"
       });
+
+      if (roundUpValues.some(Boolean)) {
+        datasets.push({
+          label: "Round-ups",
+          data: share(roundUpValues),
+          backgroundColor: APP.charts.flow.roundUp,
+          borderColor: APP.charts.surface,
+          borderWidth: { top: 2 },
+          borderSkipped: false,
+          stack: "outflow"
+        });
+      }
 
       if (freeMoneyValues.some(Boolean)) {
         datasets.push({
@@ -797,6 +824,7 @@
         "operatingExpense",
         "savingsContribution",
         "freeMoneyContribution",
+        "roundUpContribution",
         "debtPayment"
       ];
     }
@@ -947,6 +975,7 @@
           "operatingExpense",
           "savingsContribution",
           "freeMoneyContribution",
+          "roundUpContribution",
           "debtPayment"
         ] :
         ["operatingExpense"];
@@ -1142,6 +1171,7 @@
         "operatingExpense",
         "savingsContribution",
         "freeMoneyContribution",
+        "roundUpContribution",
         "debtPayment"
       ];
     }
@@ -1212,7 +1242,7 @@
     var monthOpen = month >= currentMonth;
     var pendingIncome = monthOpen ? Math.max(0, expectedIncome - totals.income) : 0;
     var cashLeft = totals.income + pendingIncome - spent -
-      totals.savingsContributions - totals.freeMoney - totals.debtPayments;
+      totals.savingsContributions - totals.freeMoney - totals.roundUps - totals.debtPayments;
     var limited = cashLeft < budgetLeft - 0.005;
     var remaining = limited ? cashLeft : budgetLeft;
 
@@ -1222,7 +1252,7 @@
     var offsets = [];
 
     if (limited) {
-      var savedExtra = totals.savingsContributions + totals.freeMoney - targets.savings;
+      var savedExtra = totals.savingsContributions + totals.freeMoney + totals.roundUps - targets.savings;
       var debtExtra = totals.debtPayments - targets.debt;
       var incomeShort = monthOpen ? 0 : expectedIncome - totals.income;
       var overPlanned = targets.spending + targets.savings + targets.debt - expectedIncome;
@@ -1515,6 +1545,7 @@
       grossSpending: APP.controller.sumTransactions(scoped, ["grossSpending"]),
       savings: APP.controller.sumTransactions(scoped, ["savingsContribution"]),
       freeMoney: APP.controller.sumTransactions(scoped, ["freeMoneyContribution"]),
+      roundUps: APP.controller.sumTransactions(scoped, ["roundUpContribution"]),
       debt: APP.controller.sumTransactions(scoped, ["debtPayment"])
     };
   };
@@ -1551,6 +1582,7 @@
 
     steps.push({ label: "Savings", value: -totals.savings, kind: "savings" });
     steps.push({ label: "Free money", value: -totals.freeMoney, kind: "freeMoney" });
+    steps.push({ label: "Round-ups", value: -totals.roundUps, kind: "roundUp" });
     steps.push({ label: "Debt payments", value: -totals.debt, kind: "debt" });
 
     steps = steps.filter(function (step) {
@@ -1559,7 +1591,7 @@
 
     steps.push({
       label: "Net cash flow",
-      value: totals.income - totals.spending - totals.savings - totals.freeMoney - totals.debt,
+      value: totals.income - totals.spending - totals.savings - totals.freeMoney - totals.roundUps - totals.debt,
       kind: "total"
     });
 
@@ -1579,7 +1611,7 @@
     var totals = APP.controller.flowTotals(visual, months);
     // Refunds are drawn as a source, so spending here is before refunds.
     var inflow = totals.income + totals.refunds;
-    var outflow = totals.grossSpending + totals.savings + totals.freeMoney + totals.debt;
+    var outflow = totals.grossSpending + totals.savings + totals.freeMoney + totals.roundUps + totals.debt;
     var byCategory = visual.aggregationMode === "byCategory";
 
     function children(kinds) {
@@ -1636,6 +1668,12 @@
           value: totals.savings,
           color: APP.charts.flow.savings,
           children: children(["savingsContribution"])
+        },
+        {
+          label: "Round-ups",
+          value: totals.roundUps,
+          color: APP.charts.flow.roundUp,
+          children: []
         },
         {
           label: "Debt payments",
@@ -2448,6 +2486,7 @@
       section("Spending (after refunds)", APP.charts.flow.spending, ["operatingExpense"]),
       section("Savings", APP.charts.flow.savings, ["savingsContribution"]),
       section("Free money", APP.charts.flow.freeMoney, ["freeMoneyContribution"]),
+      section("Round-ups", APP.charts.flow.roundUp, ["roundUpContribution"]),
       section("Debt payments", APP.charts.flow.debt, ["debtPayment"])
     ], {
       averageLabel: months.length > 1 ? "Avg / month (" + months.length + ")" : "Avg / month",
@@ -3420,6 +3459,12 @@
         "Moved into Free Money"
       ],
       [
+        "Round-ups",
+        totals.roundUps,
+        "roundup",
+        "Change saved from rounding up expenses"
+      ],
+      [
         "Debt payments",
         totals.debtPayments,
         "paydown",
@@ -3442,6 +3487,11 @@
       ]
     ].filter(function (item) {
       // Only show the Free money card for budgets that have a Free Money fund.
+      // Round-ups appear once there are any, or when rounding up is on by default.
+      if (item[2] === "roundup") {
+        return item[1] > 0 || Boolean((APP.state.settings.roundUp || {}).defaultOn);
+      }
+
       return item[2] !== "freemoney" || item[1] > 0 ||
         APP.state.categories.some(function (category) {
           return !category.archived && APP.model.isFreeMoney(category);
