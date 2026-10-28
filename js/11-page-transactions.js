@@ -210,34 +210,7 @@
     }
   };
 
-  APP.pages.transactions.openFullView = function () {
-    var filters = APP.pages.transactions.filters;
-    var rows = APP.pages.transactions.filteredRows();
-    var content = APP.dom.el("div", "transaction-full-view");
-
-    var header = APP.dom.el("p", "muted");
-    header.textContent =
-      rows.length + " filtered transaction(s) shown in full view.";
-
-    var close = APP.ui.button("Close", "button-secondary");
-
-    close.addEventListener("click", APP.ui.closeModal);
-
-    content.appendChild(header);
-    content.appendChild(
-      APP.tables.transactions(rows, { fullView: true })
-    );
-    content.appendChild(close);
-
-    content.addEventListener(
-      "click",
-      APP.pages.transactions.handleTableAction
-    );
-
-    APP.ui.modal("Transaction Full View", content);
-  };
-
-    APP.pages.transactions.openModal = function (transactionId) {
+  APP.pages.transactions.openModal = function (transactionId) {
     var existing = APP.state.transactions.filter(function (transaction) {
       return transaction.id === transactionId;
     })[0];
@@ -294,7 +267,7 @@
     );
 
     var amount = APP.ui.field(
-      "Total payment amount",
+      "Amount",
       "amount",
       "number",
       transaction.amount,
@@ -657,14 +630,25 @@
 
     updateCategoryField();
 
+    // Type as a row of buttons (the select stays, hidden, for the existing logic).
+    type.root.hidden = true;
+    form.classList.add("transaction-form");
+    form.appendChild(APP.ui.segmented(type.input, [
+      { value: "expense", label: "Expense", tone: "tone-expense" },
+      { value: "income", label: "Income", tone: "tone-income" },
+      { value: "savings", label: "Savings", tone: "tone-savings" }
+    ]));
+    amount.root.classList.add("full", "amount-hero");
+    description.root.classList.add("full");
+
     [
-      date,
       amount,
       description,
       type,
       category,
       incomeType,
       refundCategory,
+      date,
       notes
     ].forEach(function (field) {
       form.appendChild(field.root);
@@ -767,13 +751,27 @@
 
     cancel.addEventListener("click", APP.ui.closeModal);
 
+    if (existing) {
+      var remove = APP.ui.button("Delete", "button-quiet danger modal-delete");
+
+      remove.addEventListener("click", function () {
+        APP.pages.transactions.deleteTransaction(existing.id);
+
+        if (!APP.state.transactions.some(function (item) { return item.id === existing.id; })) {
+          APP.ui.closeModal();
+        }
+      });
+      actions.appendChild(remove);
+    }
+
     actions.appendChild(cancel);
     actions.appendChild(save);
     form.appendChild(actions);
 
     APP.ui.modal(
       existing ? "Edit transaction" : "Add transaction",
-      form
+      form,
+      { size: "sheet" }
     );
   };
 
@@ -875,156 +873,258 @@
     expense.roundUpId = saved.id;
   };
 
+  APP.pages.transactions.defaultFilters = function () {
+    return {
+      search: "",
+      type: "",
+      categoryId: "",
+      period: "selectedMonth",
+      fromDate: "",
+      toDate: "",
+      minAmount: "",
+      maxAmount: "",
+      sort: "newest",
+      page: 1,
+      pageSize: 50
+    };
+  };
+
+  // How many filters (other than search, sort and page size) differ from the defaults.
+  APP.pages.transactions.activeFilterCount = function () {
+    var filters = APP.pages.transactions.filters;
+    var defaults = APP.pages.transactions.defaultFilters();
+
+    return ["type", "categoryId", "period", "fromDate", "toDate", "minAmount", "maxAmount"]
+      .filter(function (key) {
+        return String(filters[key]) !== String(defaults[key]);
+      }).length;
+  };
+
+  // The table on wide screens and the grouped list on phones; CSS shows the right one.
+  APP.pages.transactions.results = function (rows, options) {
+    var sort = APP.pages.transactions.filters.sort;
+    var box = APP.dom.el("div", "transaction-results");
+
+    box.appendChild(APP.tables.transactions(rows, options));
+    box.appendChild(APP.tables.transactionList(rows, {
+      grouped: sort === "newest" || sort === "oldest"
+    }));
+    box.addEventListener("click", APP.pages.transactions.handleTableAction);
+    return box;
+  };
+
+  APP.pages.transactions.periodLabel = function () {
+    var filters = APP.pages.transactions.filters;
+
+    if (filters.fromDate || filters.toDate) {
+      return (filters.fromDate || "…") + " to " + (filters.toDate || "…");
+    }
+
+    return {
+      selectedMonth: APP.controller.monthName(APP.state.settings.selectedMonth),
+      last3Months: "Last 3 months",
+      last6Months: "Last 6 months",
+      currentYear: APP.state.settings.selectedMonth.slice(0, 4),
+      all: "All dates"
+    }[filters.period] || "";
+  };
+
+  APP.pages.transactions.openFullView = function () {
+    var rows = APP.pages.transactions.filteredRows();
+    var content = APP.dom.el("div", "transaction-full-view");
+
+    content.appendChild(APP.dom.el("p", "muted transaction-full-count",
+      rows.length + (rows.length === 1 ? " transaction" : " transactions") + " · " +
+      APP.pages.transactions.periodLabel()));
+    content.appendChild(APP.pages.transactions.results(rows, { fullView: true }));
+
+    APP.ui.modal("All transactions", content, { size: "full" });
+  };
+
   APP.pages.transactions.render = function () {
     var root = APP.dom.refs.pages.transactions;
     var filters = APP.pages.transactions.filters;
-    var allRows = APP.pages.transactions.filteredRows();
+    var page = APP.pages.transactions;
 
-    var pageSize = Math.max(1, Number(filters.pageSize || 50));
-    var pageCount = Math.max(1, Math.ceil(allRows.length / pageSize));
+    // ---- Toolbar: search, filters toggle, full view
 
-    if (filters.page > pageCount) {
-      filters.page = pageCount;
+    var toolbar = APP.dom.el("div", "transaction-toolbar");
+    var searchWrap = APP.dom.el("label", "transaction-search");
+    var search = APP.dom.el("input");
+    var filterToggle = APP.ui.button("Filters", "button-secondary filter-toggle");
+    var fullViewButton = APP.ui.button("Full view", "button-secondary");
+    var activeCount = page.activeFilterCount();
+
+    search.type = "search";
+    search.value = filters.search;
+    search.placeholder = "Search transactions";
+    search.setAttribute("aria-label", "Search transactions");
+    searchWrap.appendChild(APP.dom.el("span", "transaction-search-icon", "⌕"));
+    searchWrap.appendChild(search);
+
+    filterToggle.setAttribute("aria-expanded", page.filtersOpen ? "true" : "false");
+
+    if (activeCount) {
+      filterToggle.appendChild(APP.dom.el("span", "filter-count", String(activeCount)));
     }
 
-    var start = (filters.page - 1) * pageSize;
-    var end = Math.min(start + pageSize, allRows.length);
-    var visibleRows = allRows.slice(start, end);
+    toolbar.appendChild(searchWrap);
+    toolbar.appendChild(filterToggle);
+    toolbar.appendChild(fullViewButton);
 
-    var controls = APP.dom.el("div", "button-row");
-    var exportButton = APP.ui.button("Export filtered CSV");
-    var fullViewButton = APP.ui.button("Full View");
+    // ---- Filters panel (collapsed until opened)
+
+    var filterPanel = APP.dom.el("div", "transaction-filter-panel");
     var filterGrid = APP.dom.el("div", "transaction-filter-grid");
-    var pagination = APP.dom.el("div", "transaction-pagination");
 
-    var search = APP.ui.field(
-      "Search",
-      "search",
-      "search",
-      filters.search,
-      {
-        placeholder: "Description, notes, or category"
-      }
-    );
+    filterPanel.hidden = !page.filtersOpen;
 
-    var type = APP.ui.field(
-      "Transaction type",
-      "type",
-      "select",
-      filters.type,
-      {
-        options: [
-          { value: "", label: "All types" },
-          { value: "income", label: "Income" },
-          { value: "refund", label: "Refund" },
-          { value: "operatingExpense", label: "Expense" },
-          { value: "savingsContribution", label: "Savings contribution" },
-          { value: "freeMoneyContribution", label: "Moved to Free Money" },
-          { value: "savingsWithdrawal", label: "Savings-funded expense" },
-          { value: "debtPayment", label: "Debt payment" }
-        ]
-      }
-    );
+    var type = APP.ui.field("Type", "type", "select", filters.type, {
+      options: [
+        { value: "", label: "All types" },
+        { value: "income", label: "Income" },
+        { value: "refund", label: "Refund" },
+        { value: "operatingExpense", label: "Expense" },
+        { value: "savingsContribution", label: "Savings contribution" },
+        { value: "freeMoneyContribution", label: "Moved to Free Money" },
+        { value: "savingsWithdrawal", label: "Savings-funded expense" },
+        { value: "debtPayment", label: "Debt payment" }
+      ]
+    });
 
-    var category = APP.ui.field(
-      "Category",
-      "category",
-      "select",
-      filters.categoryId,
-      {
-        options: APP.pages.transactions.categoryOptions()
-      }
-    );
+    var category = APP.ui.field("Category", "category", "select", filters.categoryId, {
+      options: page.categoryOptions()
+    });
+
+    var period = APP.ui.field("Date range", "period", "select", filters.period, {
+      options: [
+        { value: "selectedMonth", label: "Selected reporting month" },
+        { value: "last3Months", label: "Last 3 months" },
+        { value: "last6Months", label: "Last 6 months" },
+        { value: "currentYear", label: "Selected calendar year" },
+        { value: "all", label: "All dates" }
+      ]
+    });
+
+    var fromDate = APP.ui.field("From", "fromDate", "date", filters.fromDate);
+    var toDate = APP.ui.field("To", "toDate", "date", filters.toDate);
+    var minimum = APP.ui.field("Min amount", "minimum", "number", filters.minAmount, { min: "0", step: "0.01" });
+    var maximum = APP.ui.field("Max amount", "maximum", "number", filters.maxAmount, { min: "0", step: "0.01" });
+
+    var sort = APP.ui.field("Sort by", "sort", "select", filters.sort, {
+      options: [
+        { value: "newest", label: "Newest first" },
+        { value: "oldest", label: "Oldest first" },
+        { value: "highest", label: "Highest amount" },
+        { value: "lowest", label: "Lowest amount" },
+        { value: "description", label: "Description" },
+        { value: "category", label: "Category" }
+      ]
+    });
+
+    var pageSizeField = APP.ui.field("Per page", "pageSize", "select", String(filters.pageSize || 50), {
+      options: [
+        { value: "25", label: "25" },
+        { value: "50", label: "50" },
+        { value: "100", label: "100" }
+      ]
+    });
+
+    [type, category, period, sort, fromDate, toDate, minimum, maximum, pageSizeField].forEach(function (field) {
+      filterGrid.appendChild(field.root);
+    });
 
     APP.ui.tagCategoryOptions(category.input);
     APP.ui.searchSelect(category.input, { placeholder: "All categories" });
 
-    var period = APP.ui.field(
-      "Date range",
-      "period",
-      "select",
-      filters.period,
-      {
-        options: [
-          { value: "selectedMonth", label: "Selected reporting month" },
-          { value: "last3Months", label: "Last 3 months" },
-          { value: "last6Months", label: "Last 6 months" },
-          { value: "currentYear", label: "Selected calendar year" },
-          { value: "all", label: "All dates" }
-        ]
+    var filterActions = APP.dom.el("div", "transaction-filter-actions");
+    var clearFilters = APP.ui.button("Clear filters", "button-quiet");
+    var exportButton = APP.ui.button("Export CSV", "button-quiet");
+
+    filterActions.appendChild(clearFilters);
+    filterActions.appendChild(exportButton);
+    filterPanel.appendChild(filterGrid);
+    filterPanel.appendChild(filterActions);
+
+    // ---- Results: redrawn on their own so typing in search keeps focus
+
+    var summary = APP.dom.el("p", "transaction-summary");
+    var resultsHolder = APP.dom.el("div");
+    var pagination = APP.dom.el("div", "transaction-pagination");
+    var rows = [];
+
+    function renderResults() {
+      rows = page.filteredRows();
+
+      var pageSize = Math.max(1, Number(filters.pageSize || 50));
+      var pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+
+      filters.page = Math.min(Math.max(1, filters.page), pageCount);
+
+      var start = (filters.page - 1) * pageSize;
+      var end = Math.min(start + pageSize, rows.length);
+      var totals = { income: 0, out: 0 };
+
+      rows.forEach(function (transaction) {
+        var tone = APP.tables.transactionTone(transaction);
+        totals[tone.typeClass === "transaction-income" ? "income" : "out"] += APP.utils.money(transaction.amount);
+      });
+
+      APP.dom.clear(summary);
+      summary.appendChild(APP.dom.el("span", "", rows.length + (rows.length === 1 ? " transaction" : " transactions") +
+        " · " + page.periodLabel()));
+
+      if (rows.length) {
+        summary.appendChild(APP.dom.el("span", "money-income", "+" + APP.utils.currency(totals.income) + " in"));
+        summary.appendChild(APP.dom.el("span", "money-expense", "−" + APP.utils.currency(totals.out) + " out"));
       }
-    );
 
-    var fromDate = APP.ui.field(
-      "From date",
-      "fromDate",
-      "date",
-      filters.fromDate
-    );
+      APP.dom.clear(resultsHolder);
+      resultsHolder.appendChild(page.results(rows.slice(start, end)));
 
-    var toDate = APP.ui.field(
-      "To date",
-      "date",
-      filters.toDate
-    );
+      APP.dom.clear(pagination);
+      pagination.hidden = pageCount <= 1;
 
-    var minimum = APP.ui.field(
-      "Minimum amount",
-      "minimum",
-      "number",
-      filters.minAmount,
-      {
-        min: "0",
-        step: "0.01"
+      if (pageCount > 1) {
+        var previous = APP.ui.button("‹ Previous");
+        var next = APP.ui.button("Next ›");
+
+        previous.disabled = filters.page <= 1;
+        next.disabled = filters.page >= pageCount;
+        previous.addEventListener("click", function () {
+          filters.page -= 1;
+          renderResults();
+          summary.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+        next.addEventListener("click", function () {
+          filters.page += 1;
+          renderResults();
+          summary.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+
+        pagination.appendChild(previous);
+        pagination.appendChild(APP.dom.el("span", "muted",
+          (start + 1) + "–" + end + " of " + rows.length));
+        pagination.appendChild(next);
       }
-    );
+    }
 
-    var maximum = APP.ui.field(
-  "Maximum amount",
-  "maximum",
-  "number",
-  filters.maxAmount,
-      {
-        min: "0",
-        step: "0.01"
+    function updateFilterCount() {
+      var count = page.activeFilterCount();
+      var badge = filterToggle.querySelector(".filter-count");
+
+      if (!count && badge) {
+        badge.remove();
+      } else if (count) {
+        if (!badge) {
+          badge = APP.dom.el("span", "filter-count");
+          filterToggle.appendChild(badge);
+        }
+        badge.textContent = String(count);
       }
-    );
-
-    var sort = APP.ui.field(
-      "Sort by",
-      "sort",
-      "select",
-      filters.sort,
-      {
-        options: [
-          { value: "newest", label: "Newest date" },
-          { value: "oldest", label: "Oldest date" },
-          { value: "highest", label: "Highest amount" },
-          { value: "lowest", label: "Lowest amount" },
-          { value: "description", label: "Description" },
-          { value: "category", label: "Category" }
-        ]
-      }
-    );
-
-    var pageSizeField = APP.ui.field(
-      "Rows per page",
-      "pageSize",
-      "select",
-      String(pageSize),
-      {
-        options: [
-          { value: "25", label: "25" },
-          { value: "50", label: "50" },
-          { value: "100", label: "100" }
-        ]
-      }
-    );
-
-    var clearFilters = APP.ui.button("Clear filters");
+    }
 
     function refreshFilters() {
-      filters.search = search.input.value;
       filters.type = type.input.value;
       filters.categoryId = category.input.value;
       filters.period = period.input.value;
@@ -1036,126 +1136,58 @@
       filters.pageSize = Number(pageSizeField.input.value);
       filters.page = 1;
 
-      APP.pages.transactions.render();
+      updateFilterCount();
+      renderResults();
     }
 
-    [
-      search.input,
-      type.input,
-      category.input,
-      period.input,
-      fromDate.input,
-      toDate.input,
-      minimum.input,
-      maximum.input,
-      sort.input,
-      pageSizeField.input
-    ].forEach(function (input) {
-      input.addEventListener(
-        input.type === "search" ? "input" : "change",
-        refreshFilters
-      );
+    search.addEventListener("input", function () {
+      filters.search = search.value;
+      filters.page = 1;
+      renderResults();
+    });
+
+    [type, category, period, fromDate, toDate, minimum, maximum, sort, pageSizeField].forEach(function (field) {
+      field.input.addEventListener("change", refreshFilters);
+    });
+
+    filterToggle.addEventListener("click", function () {
+      page.filtersOpen = !page.filtersOpen;
+      filterPanel.hidden = !page.filtersOpen;
+      filterToggle.setAttribute("aria-expanded", page.filtersOpen ? "true" : "false");
     });
 
     clearFilters.addEventListener("click", function () {
-      APP.pages.transactions.filters = {
-        search: "",
-        type: "",
-        categoryId: "",
-        period: "selectedMonth",
-        fromDate: "",
-        toDate: "",
-        minAmount: "",
-        maxAmount: "",
-        sort: "newest",
-        page: 1,
-        pageSize: 50
-      };
-
-      APP.pages.transactions.render();
+      page.filters = page.defaultFilters();
+      page.render();
     });
 
     exportButton.addEventListener("click", function () {
       APP.exports.download(
         "transactions-filtered.csv",
         "text/csv;charset=utf-8",
-        APP.exports.transactionsCsv(allRows)
+        APP.exports.transactionsCsv(rows)
       );
     });
 
-    fullViewButton.addEventListener("click", function () {
-      APP.pages.transactions.openFullView();
-    });
+    fullViewButton.addEventListener("click", page.openFullView);
 
-    [
-      search,
-      type,
-      category,
-      period,
-      fromDate,
-      toDate,
-      minimum,
-      maximum,
-      sort,
-      pageSizeField
-    ].forEach(function (field) {
-      filterGrid.appendChild(field.root);
-    });
+    // Re-rendering (e.g. after a save) rebuilds the search box; keep typing where it was.
+    var hadFocus = document.activeElement && document.activeElement.classList &&
+      document.activeElement.dataset.role === "transaction-search";
 
-    controls.appendChild(exportButton);
-    controls.appendChild(fullViewButton);
-    controls.appendChild(clearFilters);
-
-    var previous = APP.ui.button("Previous");
-    var next = APP.ui.button("Next");
-
-    previous.disabled = filters.page <= 1;
-    next.disabled = filters.page >= pageCount;
-
-    previous.addEventListener("click", function () {
-      filters.page = Math.max(1, filters.page - 1);
-      APP.pages.transactions.render();
-    });
-
-    next.addEventListener("click", function () {
-      filters.page = Math.min(pageCount, filters.page + 1);
-      APP.pages.transactions.render();
-    });
-
-    pagination.appendChild(APP.dom.el(
-      "span",
-      "muted",
-      allRows.length ?
-        "Showing " + (start + 1) + "–" + end +
-        " of " + allRows.length + " transactions" :
-        "Showing 0 transactions"
-    ));
-
-    pagination.appendChild(previous);
-    pagination.appendChild(APP.dom.el(
-      "span",
-      "muted",
-      "Page " + filters.page + " of " + pageCount
-    ));
-    pagination.appendChild(next);
+    search.dataset.role = "transaction-search";
 
     APP.dom.clear(root);
-
-    root.appendChild(APP.ui.panelHeader(
-      "Transactions",
-      "Use filters to search transaction history without changing the dashboard reporting month.",
-      controls
-    ));
-
-       var transactionTable = APP.tables.transactions(visibleRows);
-
-    transactionTable.addEventListener(
-      "click",
-      APP.pages.transactions.handleTableAction
-    );
-
-    root.appendChild(filterGrid);
-    root.appendChild(transactionTable);
+    root.appendChild(toolbar);
+    root.appendChild(filterPanel);
+    root.appendChild(summary);
+    root.appendChild(resultsHolder);
     root.appendChild(pagination);
+    renderResults();
+
+    if (hadFocus) {
+      search.focus();
+      search.setSelectionRange(search.value.length, search.value.length);
+    }
   };
 }());

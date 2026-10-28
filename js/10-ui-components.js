@@ -345,9 +345,12 @@
     return header;
   };
 
-  APP.ui.modal = function (title, content) {
-    var overlay = APP.dom.el("div", "modal-overlay");
-    var modal = APP.dom.el("section", "modal");
+  // options.size: "full" fills the whole screen; "sheet" is a form that fills a phone
+  // screen with its buttons kept in view.
+  APP.ui.modal = function (title, content, options) {
+    var config = options || {};
+    var overlay = APP.dom.el("div", "modal-overlay" + (config.size ? " modal-overlay-" + config.size : ""));
+    var modal = APP.dom.el("section", "modal" + (config.size ? " modal-" + config.size : ""));
     var heading = APP.dom.el("div", "modal-head");
     var close = APP.ui.button("Close", "button-quiet");
 
@@ -366,10 +369,80 @@
 
     APP.dom.clear(APP.dom.refs.modalRoot);
     APP.dom.refs.modalRoot.appendChild(overlay);
+    document.body.classList.add("modal-open");
   };
 
   APP.ui.closeModal = function () {
     APP.dom.clear(APP.dom.refs.modalRoot);
+    document.body.classList.remove("modal-open");
+  };
+
+  // A row of buttons that picks one value for a (hidden) select, firing its change event.
+  APP.ui.segmented = function (select, choices) {
+    var group = APP.dom.el("div", "segmented full");
+
+    group.setAttribute("role", "radiogroup");
+
+    function sync() {
+      Array.prototype.slice.call(group.children).forEach(function (button) {
+        var on = button.dataset.value === select.value;
+        button.classList.toggle("active", on);
+        button.setAttribute("aria-checked", on ? "true" : "false");
+      });
+    }
+
+    choices.forEach(function (choice) {
+      var button = APP.dom.el("button", "segmented-option " + (choice.tone || ""), choice.label);
+
+      button.type = "button";
+      button.dataset.value = choice.value;
+      button.setAttribute("role", "radio");
+      button.addEventListener("click", function () {
+        if (select.value !== choice.value) {
+          select.value = choice.value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        sync();
+      });
+      group.appendChild(button);
+    });
+
+    select.addEventListener("change", sync);
+    sync();
+    return group;
+  };
+
+  // A titled group of fields inside a form, to break long forms into readable parts.
+  APP.ui.formSection = function (title, fields) {
+    var section = APP.dom.el("fieldset", "form-section full");
+
+    if (title) {
+      section.appendChild(APP.dom.el("legend", "", title));
+    }
+
+    var grid = APP.dom.el("div", "form-grid");
+
+    fields.forEach(function (field) {
+      if (field) {
+        grid.appendChild(field.root || field);
+      }
+    });
+
+    section.appendChild(grid);
+    return section;
+  };
+
+  // Small rounded label, e.g. a status.
+  APP.ui.pill = function (text, tone) {
+    return APP.dom.el("span", "pill " + (tone || ""), text);
+  };
+
+  // Label-and-value pair used on cards.
+  APP.ui.stat = function (label, value, className) {
+    var stat = APP.dom.el("div", "card-stat");
+    stat.appendChild(APP.dom.el("span", "", label));
+    stat.appendChild(APP.dom.el("strong", className || "", value));
+    return stat;
   };
 
   APP.ui.empty = function (message) {
