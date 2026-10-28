@@ -126,20 +126,15 @@ APP.pages.savings.openFundModal = function (onCreated) {
       ""
     );
 
-    [
-      name,
-      group,
-      openingBalance,
-      openingMonth,
-      monthlyGoal,
-      eventualGoal,
-      eventualDate
-    ].forEach(function (field) {
-      form.appendChild(field.root);
-    });
-
     var goalHint = APP.pages.savings.goalHint(eventualGoal, eventualDate, 0);
-    form.appendChild(goalHint);
+
+    name.root.classList.add("full");
+    group.root.classList.add("full");
+    monthlyGoal.root.classList.add("full");
+
+    form.appendChild(APP.ui.formSection("", [name, group]));
+    form.appendChild(APP.ui.formSection("Starting balance", [openingBalance, openingMonth]));
+    form.appendChild(APP.ui.formSection("Goals", [monthlyGoal, eventualGoal, eventualDate, goalHint]));
 
     // With a target date and no monthly goal typed, use the amount the date requires.
     function fillMonthlyFromDate() {
@@ -239,8 +234,116 @@ APP.pages.savings.openFundModal = function (onCreated) {
     actions.appendChild(save);
     form.appendChild(actions);
 
-    APP.ui.modal("Add Savings Fund", form);
+    APP.ui.modal("Add savings fund", form, { size: "sheet" });
   };
+  APP.pages.savings.fundCard = function (fund, priorMonth) {
+    var card = APP.dom.el("article", "item-card fund-item" + (fund.category.archived ? " is-archived" : ""));
+    var head = APP.dom.el("div", "item-card-head");
+    var title = APP.dom.el("div", "item-card-title");
+    var edit = APP.ui.button("Edit", "button-quiet item-card-edit");
+
+    title.appendChild(APP.dom.el("h3", "", fund.category.name));
+
+    if (fund.category.archived) {
+      title.appendChild(APP.ui.pill("Archived"));
+    } else if (fund.eventualGoal > 0 && fund.remainingEventual <= 0) {
+      title.appendChild(APP.ui.pill("Goal reached", "pill-good"));
+    }
+
+    edit.addEventListener("click", function () {
+      APP.pages.categories.openModal(fund.category.id);
+    });
+
+    head.appendChild(title);
+    head.appendChild(edit);
+    card.appendChild(head);
+
+    // Balance, and progress toward the eventual goal when there is one.
+    var balance = APP.dom.el("div", "item-card-figure");
+    balance.appendChild(APP.dom.el("strong", "", APP.utils.currency(fund.balance)));
+
+    if (fund.eventualGoal > 0) {
+      balance.appendChild(APP.dom.el("span", "muted", "of " + APP.utils.currency(fund.eventualGoal) + " goal"));
+    } else {
+      balance.appendChild(APP.dom.el("span", "muted", "saved"));
+    }
+
+    card.appendChild(balance);
+
+    if (fund.eventualGoal > 0) {
+      var progress = APP.dom.el("div", "item-card-progress");
+      progress.appendChild(APP.ui.progress(fund.balance, fund.eventualGoal));
+      progress.appendChild(APP.dom.el("span", "", Math.min(100, fund.eventualProgress).toFixed(0) + "%"));
+      card.appendChild(progress);
+    }
+
+    // This month at a glance.
+    var stats = APP.dom.el("div", "card-stats");
+    var net = fund.deposits - fund.withdrawals;
+
+    stats.appendChild(APP.ui.stat("This month",
+      (net > 0 ? "+" : net < 0 ? "−" : "") + APP.utils.currency(Math.abs(net)),
+      net > 0 ? "money-income" : net < 0 ? "money-expense" : "muted"));
+    stats.appendChild(APP.ui.stat("Monthly goal",
+      fund.monthlyGoal > 0 ? APP.utils.currency(fund.monthlyGoal) : "Not set",
+      fund.monthlyGoal > 0 ? "" : "muted"));
+    stats.appendChild(APP.ui.stat("End of month", APP.utils.currency(fund.projectedMonthlyBalance)));
+    card.appendChild(stats);
+
+    if (fund.deposits > 0 && fund.withdrawals > 0) {
+      card.appendChild(APP.dom.el("p", "item-card-note",
+        "+" + APP.utils.currency(fund.deposits) + " added · −" + APP.utils.currency(fund.withdrawals) +
+        " used · started the month at " + APP.utils.currency(APP.model.savingsBalance(fund.category.id, priorMonth))));
+    }
+
+    // Plan toward the target date.
+    var plan = fund.targetPlan;
+
+    if (fund.eventualGoal > 0 && fund.remainingEventual > 0) {
+      var planBox = APP.dom.el("div", "item-card-plan");
+
+      if (plan && plan.months > 0) {
+        var short = fund.monthlyGoal > 0 && fund.monthlyGoal < plan.perMonth;
+
+        planBox.appendChild(APP.dom.el("p", "",
+          "Save " + APP.utils.currency(plan.perMonth) + "/mo to reach it by " +
+          APP.controller.monthName(plan.targetMonth) + " (" + plan.months +
+          (plan.months === 1 ? " month left)" : " months left)")));
+
+        if (short) {
+          planBox.appendChild(APP.dom.el("p", "warning-text",
+            "Your goal is " + APP.utils.currency(plan.perMonth - fund.monthlyGoal) + "/mo short."));
+        }
+
+        if (Math.abs(fund.monthlyGoal - plan.perMonth) >= 0.01) {
+          var useIt = APP.ui.button("Use as this month's goal", "button-quiet");
+
+          useIt.addEventListener("click", function () {
+            APP.pages.savings.setMonthlyGoal(fund.category.id, plan.perMonth);
+          });
+          planBox.appendChild(useIt);
+        }
+      } else if (plan) {
+        planBox.classList.add("is-late");
+        planBox.appendChild(APP.dom.el("p", "danger",
+          "Target date (" + APP.controller.monthName(plan.targetMonth) + ") has passed with " +
+          APP.utils.currency(fund.remainingEventual) + " to go."));
+      } else if (fund.monthlyGoal > 0) {
+        planBox.appendChild(APP.dom.el("p", "",
+          APP.utils.currency(fund.remainingEventual) + " to go · about " +
+          Math.ceil(fund.estimatedMonthsRemaining) + " months at your monthly goal (" +
+          fund.estimatedCompletionMonth + ")"));
+      } else {
+        planBox.appendChild(APP.dom.el("p", "muted",
+          APP.utils.currency(fund.remainingEventual) + " to go. Add a target date or monthly goal to plan it."));
+      }
+
+      card.appendChild(planBox);
+    }
+
+    return card;
+  };
+
   APP.pages.savings.render = function () {
     var root = APP.dom.refs.pages.savings;
     var month = APP.state.settings.selectedMonth;
@@ -266,24 +369,16 @@ APP.pages.savings.openFundModal = function (onCreated) {
     APP.dom.clear(root);
 
     var page = APP.dom.el("section", "panel savings-page");
-
-        var actions = APP.dom.el("div", "button-row");
-
-    var addFund = APP.ui.button(
-      "+ Add Savings Fund",
-      "button-primary"
-    );
+    var addFund = APP.ui.button("+ Add fund", "button-primary");
 
     addFund.addEventListener("click", function () {
       APP.pages.savings.openFundModal();
     });
 
-    actions.appendChild(addFund);
-
     page.appendChild(APP.ui.panelHeader(
       "Savings & Goals",
-      "Track monthly contributions, eventual savings goals, target dates, projected completion, and savings-funded expenses.",
-      actions
+      "Savings-funded expenses come out of their fund and don't count as normal spending.",
+      addFund
     ));
 
     var hero = APP.dom.el("div", "fund-hero savings-summary");
@@ -293,194 +388,19 @@ APP.pages.savings.openFundModal = function (onCreated) {
     hero.appendChild(APP.ui.currencyCard("Monthly target", monthlyTarget));
     page.appendChild(hero);
 
-    var note = APP.dom.el(
-      "div",
-      "notice notice-info",
-      "Savings-funded expenses reduce the associated savings fund. They are tracked separately from normal operating spending."
-    );
-
-    page.appendChild(note);
-
     if (!funds.length) {
-      page.appendChild(APP.ui.empty("No savings funds are configured."));
+      page.appendChild(APP.ui.empty("No savings funds yet. Add one to start tracking."));
       root.appendChild(page);
       return;
     }
 
-    var wrap = APP.dom.el("div", "table-wrap savings-table-wrap");
-    var table = APP.dom.el("table", "data-table savings-table");
-    var head = APP.dom.el("thead");
-    var body = APP.dom.el("tbody");
-    var headerRow = APP.dom.el("tr");
-
-    [
-      "Savings & Goals",
-      "Opening",
-      "Deposits",
-      "Withdrawals",
-      "Current Balance",
-      "Monthly Goal",
-      "Projected Balance",
-      "Eventual Goal",
-      "Goal Progress",
-      "Actions"
-    ].forEach(function (label) {
-      headerRow.appendChild(APP.dom.el("th", "", label));
-    });
-
-    head.appendChild(headerRow);
+    var grid = APP.dom.el("div", "item-card-grid");
 
     funds.forEach(function (fund) {
-      var row = APP.dom.el("tr");
-      var openingBalance = APP.model.savingsBalance(
-        fund.category.id,
-        priorMonth
-      );
-
-      var projected = fund.projectedMonthlyBalance;
-      var eventualLabel = fund.eventualGoal > 0 ?
-        APP.utils.currency(fund.eventualGoal) :
-        "Not set";
-
-      var progressCell = APP.dom.el("td");
-      var progressText = fund.eventualGoal > 0 ?
-        Math.min(100, fund.eventualProgress).toFixed(1) + "%" :
-        "—";
-
-      var actionCell = APP.dom.el("td");
-      var edit = APP.ui.button("Edit");
-
-      edit.addEventListener("click", function () {
-        APP.pages.categories.openModal(fund.category.id);
-      });
-
-      progressCell.appendChild(APP.dom.el(
-        "span",
-        fund.eventualGoal > 0 ? "" : "muted",
-        progressText
-      ));
-
-      if (fund.eventualGoal > 0) {
-        progressCell.appendChild(APP.ui.progress(
-          fund.balance,
-          fund.eventualGoal
-        ));
-      }
-
-      row.appendChild(APP.pages.savings.cell(
-        fund.category.name +
-        (fund.category.archived ? " (Archived)" : "")
-      ));
-
-      row.appendChild(APP.pages.savings.cell(
-        APP.utils.currency(openingBalance)
-      ));
-
-      row.appendChild(APP.pages.savings.cell(
-  fund.deposits > 0 ?
-    "+" + APP.utils.currency(fund.deposits) :
-    APP.utils.currency(fund.deposits),
-  fund.deposits > 0 ? "savings-deposit" : "savings-zero"
-));
-
-row.appendChild(APP.pages.savings.cell(
-  fund.withdrawals > 0 ?
-    "−" + APP.utils.currency(fund.withdrawals) :
-    APP.utils.currency(fund.withdrawals),
-  fund.withdrawals > 0 ? "savings-withdrawal" : "savings-zero"
-));
-
-      row.appendChild(APP.pages.savings.cell(
-        APP.utils.currency(fund.balance)
-      ));
-
-      row.appendChild(APP.pages.savings.cell(
-        APP.utils.currency(fund.monthlyGoal)
-      ));
-
-      row.appendChild(APP.pages.savings.cell(
-        APP.utils.currency(projected)
-      ));
-
-      row.appendChild(APP.pages.savings.cell(eventualLabel));
-      row.appendChild(progressCell);
-
-      actionCell.appendChild(edit);
-      row.appendChild(actionCell);
-
-      body.appendChild(row);
-
-      if (fund.eventualGoal > 0) {
-        var detailRow = APP.dom.el("tr", "savings-detail-row");
-        var detailCell = APP.dom.el("td", "muted");
-
-        detailCell.colSpan = 10;
-
-        var detailText =
-          "Remaining to eventual goal: " +
-          APP.utils.currency(fund.remainingEventual);
-
-        if (fund.monthlyGoal > 0 && fund.remainingEventual > 0) {
-          detailText +=
-            " · Estimated completion: " +
-            fund.estimatedCompletionMonth +
-            " (" + Math.ceil(fund.estimatedMonthsRemaining) +
-            " months at the current monthly goal).";
-        } else if (fund.remainingEventual > 0) {
-          detailText +=
-            " · Set a monthly contribution goal to estimate completion.";
-        } else {
-          detailText += " · Eventual savings goal reached.";
-        }
-
-        detailCell.textContent = detailText;
-
-        var plan = fund.targetPlan;
-
-        if (plan && fund.remainingEventual > 0) {
-          var planLine = APP.dom.el("div", "savings-target-plan");
-
-          if (plan.months > 0) {
-            planLine.appendChild(APP.dom.el("strong", "",
-              "Save " + APP.utils.currency(plan.perMonth) + "/month to reach " +
-              APP.utils.currency(fund.eventualGoal) + " by " +
-              APP.controller.monthName(plan.targetMonth)));
-            planLine.appendChild(APP.dom.el("span", "muted", " · " + plan.months +
-              (plan.months === 1 ? " month left" : " months left") +
-              (fund.monthlyGoal > 0 && fund.monthlyGoal < plan.perMonth ?
-                " · your current goal of " + APP.utils.currency(fund.monthlyGoal) + " is short by " +
-                  APP.utils.currency(plan.perMonth - fund.monthlyGoal) :
-                "")));
-
-            if (Math.abs(fund.monthlyGoal - plan.perMonth) >= 0.01) {
-              var useIt = APP.ui.button("Use as this month's goal", "button-quiet");
-
-              useIt.addEventListener("click", function () {
-                APP.pages.savings.setMonthlyGoal(fund.category.id, plan.perMonth);
-              });
-              planLine.appendChild(useIt);
-            }
-          } else {
-            planLine.appendChild(APP.dom.el("strong", "danger",
-              "The target date (" + APP.controller.monthName(plan.targetMonth) + ") has passed with " +
-              APP.utils.currency(fund.remainingEventual) + " to go. Set a new date to get a monthly amount."));
-          }
-
-          detailCell.appendChild(planLine);
-        } else if (!fund.category.eventualSavingsGoalDate && fund.remainingEventual > 0) {
-          detailCell.appendChild(APP.dom.el("div", "muted savings-target-plan",
-            "Add a target date (Edit) to see how much to save each month."));
-        }
-
-        detailRow.appendChild(detailCell);
-        body.appendChild(detailRow);
-      }
+      grid.appendChild(APP.pages.savings.fundCard(fund, priorMonth));
     });
 
-    table.appendChild(head);
-    table.appendChild(body);
-    wrap.appendChild(table);
-    page.appendChild(wrap);
+    page.appendChild(grid);
     root.appendChild(page);
   };
 }());

@@ -316,7 +316,8 @@
 
     APP.ui.modal(
       existing ? "Edit category" : "Add category",
-      form
+      form,
+      { size: "sheet" }
     );
   };
 

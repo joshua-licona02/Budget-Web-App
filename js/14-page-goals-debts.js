@@ -120,17 +120,10 @@
       }
     );
 
-    [
-      name,
-      paymentCategory,
-      confirmedBalance,
-      balanceAsOfDate,
-      apr,
-      minimumPayment,
-      notes
-    ].forEach(function (field) {
-      form.appendChild(field.root);
-    });
+    form.appendChild(APP.ui.formSection("", [name, paymentCategory]));
+    form.appendChild(APP.ui.formSection("Balance", [confirmedBalance, balanceAsOfDate]));
+    form.appendChild(APP.ui.formSection("Terms", [apr, minimumPayment]));
+    form.appendChild(APP.ui.formSection("", [notes]));
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -210,7 +203,8 @@
 
     APP.ui.modal(
       existing ? "Edit debt" : "Add debt",
-      form
+      form,
+      { size: "sheet" }
     );
   };
 
@@ -303,9 +297,71 @@
     );
   };
 
-    APP.pages.debts.render = function () {
+  APP.pages.debts.debtCard = function (summary, category) {
+    var debt = summary.debt;
+    var card = APP.dom.el("article", "item-card debt-item" + (debt.archived ? " is-archived" : ""));
+    var head = APP.dom.el("div", "item-card-head");
+    var title = APP.dom.el("div", "item-card-title");
+    var edit = APP.ui.button("Edit", "button-quiet item-card-edit");
+
+    title.appendChild(APP.dom.el("h3", "", debt.name));
+
+    if (debt.archived) {
+      title.appendChild(APP.ui.pill("Archived"));
+    } else if (summary.minimumPaymentRisk) {
+      title.appendChild(APP.ui.pill("Below minimum", "pill-bad"));
+    } else {
+      title.appendChild(APP.ui.pill("On track", "pill-good"));
+    }
+
+    edit.addEventListener("click", function () {
+      APP.pages.debts.openDebtModal(debt.id);
+    });
+
+    head.appendChild(title);
+    head.appendChild(edit);
+    card.appendChild(head);
+
+    var figure = APP.dom.el("div", "item-card-figure");
+    figure.appendChild(APP.dom.el("strong", "", APP.utils.currency(summary.projectedBalance)));
+    figure.appendChild(APP.dom.el("span", "muted", "estimated balance"));
+    card.appendChild(figure);
+
+    var stats = APP.dom.el("div", "card-stats");
+
+    stats.appendChild(APP.ui.stat("Paid this month",
+      APP.utils.currency(summary.paymentThisMonth),
+      summary.paymentThisMonth > 0 ? "money-income" : "muted"));
+    stats.appendChild(APP.ui.stat("Minimum", APP.utils.currency(debt.minimumMonthlyPayment)));
+    stats.appendChild(APP.ui.stat("APR", Number(debt.apr || 0).toFixed(2) + "%"));
+    card.appendChild(stats);
+
+    card.appendChild(APP.dom.el("p", "item-card-note",
+      APP.utils.currency(summary.confirmedBalance) + " confirmed on " + summary.balanceAsOfDate +
+      " · about " + APP.utils.currency(summary.estimatedMonthlyInterest) + "/mo interest" +
+      (category ? " · paid from " + category.name : "")));
+
+    var footer = APP.dom.el("div", "item-card-actions");
+    var history = APP.ui.button("Payment history", "button-quiet");
+    var archive = APP.ui.button(debt.archived ? "Restore" : "Archive", "button-quiet");
+
+    history.addEventListener("click", function () {
+      APP.pages.debts.openPaymentHistory(summary);
+    });
+
+    archive.addEventListener("click", function () {
+      APP.pages.debts.toggleDebtArchive(debt.id);
+    });
+
+    footer.appendChild(history);
+    footer.appendChild(archive);
+    card.appendChild(footer);
+
+    return card;
+  };
+
+  APP.pages.debts.render = function () {
     var root = APP.dom.refs.pages.debts;
-    var controls = APP.dom.el("div", "button-row");
     var addDebt = APP.ui.button("+ Add debt", "button-primary");
     var summaries = APP.analytics.debts();
     var categoryMap = APP.model.categories().byId;
@@ -332,190 +388,41 @@
       APP.pages.debts.openDebtModal();
     });
 
-    controls.appendChild(addDebt);
-
     var page = APP.dom.el("section", "panel debt-page");
 
     page.appendChild(APP.ui.panelHeader(
-      "Debt Tracking",
-      "Confirmed balances are manually maintained. Projected balances estimate interest and subtract allocated debt payments.",
-      controls
+      "Debts",
+      "Estimated balances add interest and subtract payments since each balance was confirmed.",
+      addDebt
     ));
 
     var summaryGrid = APP.dom.el("div", "fund-hero debt-summary-grid");
 
-    summaryGrid.appendChild(APP.ui.currencyCard(
-      "Confirmed debt balance",
-      confirmedTotal,
-      "danger"
-    ));
-
-    summaryGrid.appendChild(APP.ui.currencyCard(
-      "Payments this month",
-      paymentTotal,
-      "success"
-    ));
-
-    summaryGrid.appendChild(APP.ui.currencyCard(
-      "Estimated monthly interest",
-      interestTotal,
-      "danger"
-    ));
-
-    summaryGrid.appendChild(APP.ui.currencyCard(
-      "Estimated projected balance",
-      projectedTotal
-    ));
-
+    summaryGrid.appendChild(APP.ui.currencyCard("Estimated total", projectedTotal, "danger"));
+    summaryGrid.appendChild(APP.ui.currencyCard("Paid this month", paymentTotal, "success"));
+    summaryGrid.appendChild(APP.ui.currencyCard("Monthly interest", interestTotal, "danger"));
+    summaryGrid.appendChild(APP.ui.currencyCard("Confirmed balances", confirmedTotal));
     page.appendChild(summaryGrid);
 
     if (!summaries.length) {
-      page.appendChild(APP.ui.empty(
-        "No debts are currently tracked. Add a debt to begin."
-      ));
-
+      page.appendChild(APP.ui.empty("No debts tracked yet. Add one to begin."));
       root.appendChild(page);
       return;
     }
 
-    var wrap = APP.dom.el("div", "table-wrap debt-table-wrap");
-    var table = APP.dom.el("table", "data-table debt-table");
-    var head = APP.dom.el("thead");
-    var body = APP.dom.el("tbody");
-    var heading = APP.dom.el("tr");
-
-    [
-      "Debt Account",
-      "Payment Category",
-      "Confirmed Balance",
-      "APR",
-      "Minimum Payment",
-      "Paid This Month",
-      "Projected Balance",
-      "Status",
-      "Actions"
-    ].forEach(function (label) {
-      heading.appendChild(APP.dom.el("th", "", label));
-    });
-
-    head.appendChild(heading);
+    var grid = APP.dom.el("div", "item-card-grid");
 
     summaries
       .slice()
       .sort(function (a, b) {
-        return b.projectedBalance - a.projectedBalance;
+        return Number(a.debt.archived) - Number(b.debt.archived) ||
+          b.projectedBalance - a.projectedBalance;
       })
       .forEach(function (summary) {
-        var debt = summary.debt;
-        var category = categoryMap[debt.categoryId];
-        var row = APP.dom.el("tr");
-        var actionCell = APP.dom.el("td");
-
-        var edit = APP.ui.button("Edit");
-        var history = APP.ui.button("Payments");
-        var archive = APP.ui.button(
-          debt.archived ? "Restore" : "Archive"
-        );
-
-        var statusText = summary.minimumPaymentRisk ?
-          "Minimum risk" :
-          "On track";
-
-        var statusClass = summary.minimumPaymentRisk ?
-          "danger" :
-          "success";
-
-        row.appendChild(APP.dom.el("td", "", debt.name));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          "muted",
-          category ? category.name : "Not assigned"
-        ));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          "",
-          APP.utils.currency(summary.confirmedBalance)
-        ));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          "",
-          debt.apr.toFixed(2) + "%"
-        ));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          "",
-          APP.utils.currency(debt.minimumMonthlyPayment)
-        ));
-
-       row.appendChild(APP.dom.el(
-  "td",
-  summary.paymentThisMonth > 0 ?
-    "money-income" :
-    "money-zero",
-  summary.paymentThisMonth > 0 ?
-    "+" + APP.utils.currency(summary.paymentThisMonth) :
-    APP.utils.currency(0)
-));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          "",
-          APP.utils.currency(summary.projectedBalance)
-        ));
-
-        row.appendChild(APP.dom.el(
-          "td",
-          statusClass,
-          statusText
-        ));
-
-        edit.addEventListener("click", function () {
-          APP.pages.debts.openDebtModal(debt.id);
-        });
-
-        history.addEventListener("click", function () {
-          APP.pages.debts.openPaymentHistory(summary);
-        });
-
-        archive.addEventListener("click", function () {
-          APP.pages.debts.toggleDebtArchive(debt.id);
-        });
-
-        actionCell.appendChild(edit);
-        actionCell.appendChild(history);
-        actionCell.appendChild(archive);
-
-        row.appendChild(actionCell);
-        body.appendChild(row);
-
-        var detailRow = APP.dom.el("tr", "debt-detail-row");
-        var detailCell = APP.dom.el("td", "muted");
-
-        detailCell.colSpan = 9;
-
-        detailCell.textContent =
-          "Balance confirmed as of " +
-          summary.balanceAsOfDate +
-          " · Estimated monthly interest: " +
-          APP.utils.currency(summary.estimatedMonthlyInterest) +
-          " · Payments since confirmation: " +
-          APP.utils.currency(summary.paymentsSinceConfirmed) +
-          " · Estimated principal reduction at minimum payment: " +
-          APP.utils.currency(summary.principalEstimate);
-
-        detailRow.appendChild(detailCell);
-        body.appendChild(detailRow);
+        grid.appendChild(APP.pages.debts.debtCard(summary, categoryMap[summary.debt.categoryId]));
       });
 
-    table.appendChild(head);
-    table.appendChild(body);
-    wrap.appendChild(table);
-
-    page.appendChild(wrap);
+    page.appendChild(grid);
     root.appendChild(page);
   };
 }());

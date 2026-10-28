@@ -1297,3 +1297,141 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
 .summary-card.roundup{border-color:rgba(125,216,176,.5);background:linear-gradient(145deg,var(--tint-good),var(--surface))}
 .summary-card.roundup strong{color:var(--good-text)}
 .round-up-note{display:block;margin-top:2px;color:var(--good-text);font-size:.72rem;font-weight:600}
+
+/* Elements marked hidden stay hidden even when a class gives them a display. */
+[hidden]{display:none!important}
+
+/* ---- Phone sidebar: above the page, with a dimmed backdrop that closes it */
+.sidebar{z-index:45}
+.sidebar-backdrop{display:none}
+@media(max-width:720px){
+  .sidebar{box-shadow:0 0 40px var(--shadow)}
+  body.sidebar-open .sidebar-backdrop{display:block;position:fixed;inset:0;z-index:44;background:rgba(2,7,14,.6)}
+  body.sidebar-open,body.modal-open{overflow:hidden}
+  .desktop-only{display:none!important}
+  /* 16px stops iPhones zooming in when a field is tapped. */
+  .form-field input,.form-field select,.search-select-input,textarea,.transaction-search input,.month-control input{font-size:16px;min-height:44px}
+  .button{min-height:42px}
+}
+:root[data-theme="light"] body.sidebar-open .sidebar-backdrop{background:rgba(15,23,42,.4)}
+
+/* ---- Modals: full screen view and phone-friendly form sheets */
+.modal-head h2{font-size:1.1rem}
+.modal-sheet{width:min(560px,100%)}
+.modal-sheet .modal-head,.modal-full .modal-head{position:sticky;top:-18px;z-index:3;margin:-18px -18px 16px;padding:14px 18px;border-bottom:1px solid var(--border);background:var(--surface)}
+.modal-sheet .modal-actions{position:sticky;bottom:-18px;z-index:3;margin:18px -18px -18px;padding:12px 18px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--surface)}
+.modal-sheet .modal-actions{width:auto}
+.modal-actions .modal-delete{margin-right:auto}
+.modal-overlay-full{padding:0}
+.modal-full{display:flex;flex-direction:column;width:100%;max-width:none;height:100%;max-height:none;border:0;border-radius:0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
+.modal-full .transaction-full-view{display:flex;flex:1;flex-direction:column;width:100%;min-height:0}
+.modal-full .transaction-results{flex:1;min-height:0}
+.modal-full .transaction-table-box{height:100%;max-height:none;margin:0}
+.transaction-full-count{margin:0 0 12px}
+@media(max-width:720px){
+  .modal-overlay-sheet{padding:0;place-items:end stretch}
+  .modal-sheet{width:100%;height:100vh;height:100dvh;max-height:none;border:0;border-radius:0}
+  /* Keep the buttons at the bottom of the screen even on short forms. */
+  .modal-sheet{display:flex;flex-direction:column}
+  .modal-sheet>form{display:flex;flex:1;flex-direction:column}
+  .modal-sheet .modal-actions{margin-top:auto}
+}
+
+/* ---- Form pieces */
+.form-section{min-width:0;margin:0;padding:0;border:0}
+.form-section+.form-section{padding-top:14px;border-top:1px solid var(--border)}
+.form-section legend{margin-bottom:10px;padding:0;color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.segmented{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.segmented-option{min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--muted);font-weight:700}
+.segmented-option.active{background:var(--surface3);color:var(--text);box-shadow:0 1px 3px var(--shadow)}
+.segmented-option.tone-expense.active{background:var(--tint-bad);color:var(--bad-text)}
+.segmented-option.tone-income.active{background:var(--tint-good);color:var(--good-text)}
+.segmented-option.tone-savings.active{background:var(--tint-info);color:var(--info-text)}
+.amount-hero>span{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.form-field.amount-hero input{min-height:60px;padding-left:34px;font-size:1.9rem;font-weight:800;letter-spacing:-.01em}
+.amount-hero .money-symbol{left:14px;font-size:1.5rem;font-weight:700}
+.transaction-form{gap:14px}
+
+/* ---- Transactions page */
+.transaction-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.transaction-search{position:relative;flex:1 1 260px;min-width:0}
+.transaction-search input{width:100%;min-height:42px;padding:8px 12px 8px 36px;border:1px solid var(--border);border-radius:10px;color:var(--text);background:var(--surface2)}
+.transaction-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-52%);color:var(--muted);font-size:1.15rem;pointer-events:none}
+.filter-toggle{display:inline-flex;gap:6px;align-items:center;justify-content:center}
+.filter-toggle[aria-expanded="true"]{border-color:var(--blue)}
+.filter-count{display:inline-grid;min-width:20px;height:20px;padding:0 6px;place-items:center;border-radius:99px;background:#2563eb;color:#fff;font-size:.72rem}
+.transaction-filter-panel{margin-bottom:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.transaction-filter-panel .transaction-filter-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));margin:0;padding:0;border:0;background:none}
+.transaction-filter-panel .form-field{min-width:0}
+.transaction-filter-panel .form-field input,.transaction-filter-panel .form-field select{width:100%;min-width:0}
+.transaction-filter-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.transaction-summary{display:flex;flex-wrap:wrap;gap:4px 14px;margin:0 0 10px;color:var(--muted);font-size:.84rem;scroll-margin-top:12px}
+.transaction-summary span:not(:first-child){font-weight:700}
+.transaction-pagination{justify-content:center;margin-top:12px}
+.transaction-results .transaction-list{display:none}
+.transaction-list{border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken);overflow:hidden}
+.transaction-day-label{margin:0;padding:10px 14px 6px;color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;background:var(--surface2)}
+.transaction-list .transaction-item{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;padding:12px 14px;border:0;border-top:1px solid var(--border);background:transparent;color:var(--text);text-align:left}
+.transaction-day-label+.transaction-item,.transaction-day:first-child>.transaction-item:first-child{border-top:0}
+.transaction-list .transaction-item:active{background:var(--surface2)}
+.transaction-item-dot{width:8px;height:8px;border-radius:99px;background:var(--red)}
+.transaction-item.transaction-income .transaction-item-dot{background:var(--green)}
+.transaction-item.transaction-savings .transaction-item-dot{background:var(--blue)}
+.transaction-item.transaction-withdrawal .transaction-item-dot,.transaction-item.transaction-debt .transaction-item-dot{background:var(--yellow)}
+.transaction-item-main{display:grid;gap:3px;min-width:0}
+.transaction-item-main strong{overflow:hidden;font-size:.95rem;text-overflow:ellipsis;white-space:nowrap}
+.transaction-item-main small{overflow:hidden;color:var(--muted);font-size:.78rem;text-overflow:ellipsis;white-space:nowrap}
+.transaction-item-amount{display:grid;justify-items:end;font-weight:800;white-space:nowrap}
+.transaction-item-amount .round-up-note{font-size:.7rem;font-weight:600}
+.transaction-list-empty{margin:0;padding:22px 14px;color:var(--muted);text-align:center}
+@media(max-width:720px){
+  .transactions-page{padding:14px 12px}
+  .transactions-page>.panel-heading{flex-wrap:nowrap;align-items:center;margin-bottom:12px}
+  .transactions-page>.panel-heading p{display:none}
+  .transaction-search{flex-basis:100%}
+  .transaction-toolbar .button{flex:1}
+  .transaction-results .transaction-table-box{display:none}
+  .transaction-results .transaction-list{display:block}
+  .transaction-filter-panel .transaction-filter-grid{grid-template-columns:1fr 1fr}
+  .transaction-filter-panel .form-field:has(.search-select){grid-column:1/-1}
+  .modal-full .transaction-results{overflow:auto}
+}
+
+/* ---- Card layout shared by Savings and Debts */
+.item-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.item-card{display:grid;align-content:start;gap:12px;min-width:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-sunken)}
+.item-card.is-archived{opacity:.6}
+.item-card-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.item-card-title{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;min-width:0}
+.item-card-title h3{margin:0;font-size:1rem}
+.item-card-edit{min-height:32px;margin:-6px -8px 0 0;padding:4px 10px}
+.item-card-figure{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.item-card-figure strong{font-size:1.65rem;letter-spacing:-.01em}
+.item-card-figure span{font-size:.85rem}
+.item-card-progress{display:flex;gap:10px;align-items:center}
+.item-card-progress .progress{flex:1}
+.item-card-progress span{color:var(--muted);font-size:.8rem;font-weight:700}
+.card-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 0 0;border-top:1px solid var(--border)}
+.card-stat{display:grid;gap:3px;min-width:0}
+.card-stat span{color:var(--muted);font-size:.72rem}
+.card-stat strong{overflow:hidden;font-size:.92rem;text-overflow:ellipsis;white-space:nowrap}
+.item-card-note{margin:0;color:var(--muted);font-size:.78rem;line-height:1.45}
+.item-card-plan{display:grid;gap:6px;justify-items:start;padding:10px 12px;border-radius:10px;background:var(--tint-info);font-size:.84rem}
+.item-card-plan p{margin:0}
+.item-card-plan.is-late{background:var(--tint-bad)}
+.item-card-plan .button{min-height:30px;padding:4px 10px;color:var(--info-text);font-size:.8rem}
+.item-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin:-4px -8px -8px}
+.item-card-actions .button{min-height:34px;padding:4px 10px;font-size:.84rem}
+.pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:99px;background:var(--surface3);color:var(--muted);font-size:.7rem;font-weight:800;white-space:nowrap}
+.pill-good{background:var(--tint-good);color:var(--good-text)}
+.pill-bad{background:var(--tint-bad);color:var(--bad-text)}
+.warning-text{color:var(--warn-text)}
+.savings-page>.panel-heading>.button,.debt-page>.panel-heading>.button,.transactions-page>.panel-heading .button{flex-shrink:0;white-space:nowrap}
+@media(max-width:720px){
+  .savings-page,.debt-page{padding:14px 12px}
+  .savings-page>.panel-heading,.debt-page>.panel-heading{flex-wrap:nowrap}
+  .item-card-grid{grid-template-columns:1fr}
+  .savings-summary,.debt-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .savings-summary .summary-card,.debt-summary-grid .summary-card{padding:12px}
+  .savings-summary .summary-card strong,.debt-summary-grid .summary-card strong{font-size:1.1rem}
+}

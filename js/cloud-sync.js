@@ -3,9 +3,17 @@
 // Firestore queues writes and delivers them once the device is back online.
 //
 // Firestore layout (access limited to the allowed accounts in firestore.rules):
-//   households/main/state/core      settings, categories, budgets, debts, salary (one JSON)
+//   households/main/state/core      one JSON string field per section (settings, categories,
+//                                   budgets, accounts, ...), so an edit to one section never
+//                                   overwrites another device's edit to a different one
 //   households/main/transactions/*  one document per transaction, so two people adding
 //                                   transactions at once never overwrite each other
+//
+// Each device remembers what it last synced (the "base"). Comparing against it tells which
+// changes were made on this device and which came from elsewhere, so edits that hadn't
+// reached the cloud yet (offline, or the app closed right after an edit) are sent the next
+// time it connects instead of being replaced by the cloud copy.
+//
 // Cloud sync is optional. It turns on only when js/cloud-config.js exists (copy
 // js/cloud-config.example.js and fill in your Firebase project). Without it the app runs
 // entirely in this browser and Firebase is never downloaded.
@@ -15,14 +23,18 @@ const APP = window.APP;
 
 const HOUSEHOLD = "main";
 const LINKED_KEY = "personalBudgetDashboard.cloudLinked";
+const BASE_KEY = "personalBudgetDashboard.cloudBase";
+// Older versions flagged offline edits with this instead of keeping a base.
 const DIRTY_KEY = "personalBudgetDashboard.cloudDirty";
+
+const SECTIONS = ["schemaVersion", "settings", "categories", "budgets", "savingsGoals", "debts", "salary", "accounts", "reconcile"];
 
 // Settings that describe this device's view rather than the shared budget.
 const LOCAL_SETTINGS = ["selectedMonth", "activeView", "activeDashboardTab", "ollama", "theme"];
 
 // Firebase functions, loaded on demand in main().
 let GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithRedirect,
-  getRedirectResult, signOut, doc, getDoc, getDocs, onSnapshot, writeBatch, serverTimestamp;
+  getRedirectResult, signOut, doc, getDoc, getDocs, onSnapshot, writeBatch, serverTimestamp, deleteField;
 
 let firebaseConfig = null;
 let auth = null;
@@ -38,12 +50,13 @@ const cloud = APP.cloud = {
 };
 
 // What the cloud is known to hold, so each save only writes what actually changed.
-let syncedCore = null;
+let syncedCore = {};
 let syncedTransactions = new Map();
+// The cloud copy is still in the old single-JSON format, or a save failed: the next save
+// writes every section rather than only the changed ones.
+let writeAllCore = false;
 let unsubscribers = [];
 let pushTimer = null;
-let pushing = false;
-let pushAgain = false;
 let pendingCommits = 0;
 
 function storage(action, key, value) {
@@ -64,45 +77,119 @@ function storage(action, key, value) {
   return null;
 }
 
-function coreFromState() {
-  const settings = {};
+// Short fingerprint of a transaction, so the base doesn't store every transaction twice.
+function fingerprint(text) {
+  let hash = 2166136261;
 
-  Object.keys(APP.state.settings || {}).forEach(function (key) {
-    if (LOCAL_SETTINGS.indexOf(key) === -1) {
-      settings[key] = APP.state.settings[key];
-    }
-  });
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
 
-  return JSON.stringify({
-    schemaVersion: APP.state.schemaVersion,
-    settings: settings,
-    categories: APP.state.categories,
-    budgets: APP.state.budgets,
-    savingsGoals: APP.state.savingsGoals,
-    debts: APP.state.debts,
-    salary: APP.state.salary,
-    accounts: APP.state.accounts,
-    reconcile: APP.state.reconcile
-  });
+  return (hash >>> 0).toString(36) + "." + text.length.toString(36);
 }
 
-function applyCore(json) {
-  const core = JSON.parse(json);
+// ---- Core sections
+
+function sectionsFromState() {
+  const sections = {};
+
+  SECTIONS.forEach(function (key) {
+    let value = APP.state[key];
+
+    if (key === "settings") {
+      value = {};
+      Object.keys(APP.state.settings || {}).forEach(function (name) {
+        if (LOCAL_SETTINGS.indexOf(name) === -1) {
+          value[name] = APP.state.settings[name];
+        }
+      });
+    }
+
+    if (value !== undefined) {
+      sections[key] = JSON.stringify(value);
+    }
+  });
+
+  return sections;
+}
+
+// Reads the core document in either format: one string field per section, or the older
+// single "json" field holding everything.
+function sectionsFromDoc(data) {
+  const sections = {};
+  let legacy = false;
+
+  SECTIONS.forEach(function (key) {
+    if (typeof data[key] === "string") {
+      sections[key] = data[key];
+    }
+  });
+
+  if (!Object.keys(sections).length && typeof data.json === "string") {
+    const core = JSON.parse(data.json);
+    legacy = true;
+
+    SECTIONS.forEach(function (key) {
+      if (core[key] !== undefined) {
+        sections[key] = JSON.stringify(core[key]);
+      }
+    });
+  }
+
+  return { sections: sections, legacy: legacy };
+}
+
+function applySection(key, json) {
+  const value = JSON.parse(json);
+
+  if (key !== "settings") {
+    APP.state[key] = value;
+    return;
+  }
+
   const local = {};
 
-  LOCAL_SETTINGS.forEach(function (key) {
-    if (APP.state.settings && APP.state.settings[key] !== undefined) {
-      local[key] = APP.state.settings[key];
+  LOCAL_SETTINGS.forEach(function (name) {
+    if (APP.state.settings && APP.state.settings[name] !== undefined) {
+      local[name] = APP.state.settings[name];
     }
   });
 
-  ["schemaVersion", "categories", "budgets", "savingsGoals", "debts", "salary", "accounts", "reconcile"].forEach(function (key) {
-    if (core[key] !== undefined) {
-      APP.state[key] = core[key];
-    }
+  APP.state.settings = Object.assign({}, value || {}, local);
+}
+
+// ---- The base: what this device last confirmed the cloud holds
+
+function saveBase() {
+  const transactions = {};
+
+  syncedTransactions.forEach(function (json, id) {
+    transactions[id] = fingerprint(json);
   });
 
-  APP.state.settings = Object.assign({}, core.settings || {}, local);
+  storage("set", BASE_KEY, JSON.stringify({
+    uid: cloud.user && cloud.user.uid,
+    core: syncedCore,
+    transactions: transactions
+  }));
+}
+
+// Only record the base once nothing is waiting to be sent, so an edit that never reached
+// the cloud is never recorded as synced.
+function saveBaseIfSettled() {
+  if (!pendingCommits && !pushTimer && cloud.ready) {
+    saveBase();
+  }
+}
+
+function loadBase(uid) {
+  try {
+    const base = JSON.parse(storage("get", BASE_KEY) || "null");
+    return base && base.uid === uid && base.core && base.transactions ? base : null;
+  } catch (error) {
+    return null;
+  }
 }
 
 function setStatus(status, detail) {
@@ -130,10 +217,7 @@ function setStatus(status, detail) {
 
 function schedulePush() {
   if (!cloud.ready) {
-    // Edits made before the cloud connects (offline start) are merged in on connect.
-    if (storage("get", LINKED_KEY)) {
-      storage("set", DIRTY_KEY, "1");
-    }
+    // Edits made before the cloud connects are found by comparing with the base on connect.
     return;
   }
 
@@ -141,25 +225,40 @@ function schedulePush() {
   pushTimer = window.setTimeout(push, 600);
 }
 
+// Sends a waiting save right away, e.g. when the app is closed or put in the background.
+function flush() {
+  if (pushTimer) {
+    push();
+  }
+}
+
 function push() {
+  window.clearTimeout(pushTimer);
+  pushTimer = null;
+
   if (!cloud.ready) {
     return;
   }
 
-  if (pushing) {
-    pushAgain = true;
-    return;
-  }
-
-  pushing = true;
-
   const writes = [];
-  const core = coreFromState();
+  const sections = sectionsFromState();
+  const coreChanges = {};
   const current = new Map();
 
-  if (core !== syncedCore) {
-    writes.push(["set", coreRef, { json: core, updatedAt: serverTimestamp(), updatedBy: cloud.user.email }]);
-    syncedCore = core;
+  Object.keys(sections).forEach(function (key) {
+    if (writeAllCore || sections[key] !== syncedCore[key]) {
+      coreChanges[key] = sections[key];
+    }
+  });
+
+  if (Object.keys(coreChanges).length) {
+    writes.push(["set", coreRef, Object.assign({}, coreChanges, {
+      json: deleteField(),
+      updatedAt: serverTimestamp(),
+      updatedBy: cloud.user.email
+    }), { merge: true }]);
+    Object.assign(syncedCore, coreChanges);
+    writeAllCore = false;
   }
 
   (APP.state.transactions || []).forEach(function (transaction) {
@@ -183,57 +282,54 @@ function push() {
 
   syncedTransactions = current;
 
-  if (writes.length) {
-    setStatus(navigator.onLine ? "syncing" : "offline");
+  if (!writes.length) {
+    saveBaseIfSettled();
+    return;
+  }
 
-    // Firestore batches hold at most 500 writes. Each commit lands in the local cache
-    // right away; its promise settles when the server confirms, which can be much later
-    // offline, so later saves don't wait on it.
-    const commits = [];
+  setStatus(navigator.onLine ? "syncing" : "offline");
 
-    for (let start = 0; start < writes.length; start += 450) {
-      const batch = writeBatch(db);
+  // Firestore batches hold at most 500 writes. Each commit lands in the local cache
+  // right away; its promise settles when the server confirms, which can be much later
+  // offline, so later saves don't wait on it.
+  const commits = [];
 
-      writes.slice(start, start + 450).forEach(function (write) {
-        if (write[0] === "set") {
-          batch.set(write[1], write[2]);
-        } else {
-          batch.delete(write[1]);
-        }
-      });
+  for (let start = 0; start < writes.length; start += 450) {
+    const batch = writeBatch(db);
 
-      commits.push(batch.commit());
+    writes.slice(start, start + 450).forEach(function (write) {
+      if (write[0] === "set") {
+        batch.set(write[1], write[2], write[3] || {});
+      } else {
+        batch.delete(write[1]);
+      }
+    });
+
+    commits.push(batch.commit());
+  }
+
+  pendingCommits += 1;
+
+  Promise.all(commits).then(function () {
+    pendingCommits -= 1;
+
+    if (!pendingCommits) {
+      setStatus("synced");
     }
 
-    pendingCommits += 1;
-
-    Promise.all(commits).then(function () {
-      pendingCommits -= 1;
-
-      if (!pendingCommits) {
-        setStatus("synced");
-      }
-    }).catch(function (error) {
-      pendingCommits -= 1;
-      console.error("Cloud save failed", error);
-      // Forget what we thought the cloud held so the next save rewrites everything.
-      syncedCore = null;
-      syncedTransactions = new Map();
-      storage("set", DIRTY_KEY, "1");
-      setStatus("error", error.code === "permission-denied" ?
-        "This account can't save to the budget" :
-        "Couldn't save to the cloud");
-      APP.dom.toast("Couldn't save to the cloud: " + (error.message || error), "danger");
-    });
-  }
-
-  storage("remove", DIRTY_KEY);
-  pushing = false;
-
-  if (pushAgain) {
-    pushAgain = false;
-    push();
-  }
+    saveBaseIfSettled();
+  }).catch(function (error) {
+    pendingCommits -= 1;
+    console.error("Cloud save failed", error);
+    // Resend everything with the next save. The base isn't updated, so if the app is
+    // closed first these edits are still sent the next time it connects.
+    writeAllCore = true;
+    syncedTransactions = new Map();
+    setStatus("error", error.code === "permission-denied" ?
+      "This account can't save to the budget" :
+      "Couldn't save to the cloud");
+    APP.dom.toast("Couldn't save to the cloud: " + (error.message || error), "danger");
+  });
 }
 
 // ---- Receiving other devices' changes
@@ -250,7 +346,7 @@ function refreshApp() {
   window.requestAnimationFrame(function () {
     renderQueued = false;
     APP.controller.normalizeState();
-    // commit() saves locally, re-renders, and pushes anything normalizing changed.
+    // commit() saves locally, re-renders, and pushes anything still unsent.
     APP.controller.commit();
   });
 }
@@ -270,12 +366,35 @@ function listen() {
         return;
       }
 
-      const json = snapshot.data().json;
+      const remote = sectionsFromDoc(snapshot.data());
+      const local = sectionsFromState();
+      let changed = false;
 
-      if (json && json !== syncedCore) {
-        syncedCore = json;
-        applyCore(json);
+      if (remote.legacy) {
+        writeAllCore = true;
+      }
+
+      Object.keys(remote.sections).forEach(function (key) {
+        const json = remote.sections[key];
+
+        if (json === syncedCore[key]) {
+          return;
+        }
+
+        // A section edited here and not yet sent keeps this device's version; the
+        // pending save sends it. Otherwise take the other device's change.
+        if (local[key] === syncedCore[key]) {
+          applySection(key, json);
+          changed = true;
+        }
+
+        syncedCore[key] = json;
+      });
+
+      if (changed) {
         refreshApp();
+      } else if (!snapshot.metadata.hasPendingWrites) {
+        saveBaseIfSettled();
       }
     }, onListenError),
 
@@ -287,12 +406,17 @@ function listen() {
 
       snapshot.docChanges().forEach(function (change) {
         const id = change.doc.id;
+        const mine = byId.has(id) ? JSON.stringify(byId.get(id)) : undefined;
+        // Unchanged here since the last sync, so the other device's version applies.
+        const untouched = mine === syncedTransactions.get(id);
 
         if (change.type === "removed") {
           if (syncedTransactions.has(id)) {
+            if (untouched) {
+              byId.delete(id);
+              changed = true;
+            }
             syncedTransactions.delete(id);
-            byId.delete(id);
-            changed = true;
           }
           return;
         }
@@ -300,15 +424,19 @@ function listen() {
         const json = change.doc.data().json;
 
         if (json && syncedTransactions.get(id) !== json) {
+          if (untouched) {
+            byId.set(id, JSON.parse(json));
+            changed = true;
+          }
           syncedTransactions.set(id, json);
-          byId.set(id, JSON.parse(json));
-          changed = true;
         }
       });
 
       if (changed) {
         APP.state.transactions = Array.from(byId.values());
         refreshApp();
+      } else {
+        saveBaseIfSettled();
       }
     }, onListenError)
   ];
@@ -337,8 +465,11 @@ async function readCloud() {
     }
   });
 
+  const core = coreSnapshot.exists() ? sectionsFromDoc(coreSnapshot.data()) : null;
+
   return {
-    core: coreSnapshot.exists() ? coreSnapshot.data().json : null,
+    core: core && Object.keys(core.sections).length ? core.sections : null,
+    legacy: Boolean(core && core.legacy),
     transactions: transactions
   };
 }
@@ -349,6 +480,54 @@ function localHasData() {
       return (budget.items || []).length > 0;
     }) ||
     (APP.state.debts || []).length > 0;
+}
+
+// Combines the cloud with this device's copy: whatever changed here since the last sync
+// (base) is kept, and everything else comes from the cloud.
+function mergeWithBase(remote, base) {
+  const local = sectionsFromState();
+
+  SECTIONS.forEach(function (key) {
+    const editedHere = local[key] !== undefined && local[key] !== base.core[key];
+
+    if (!editedHere && remote.core[key] !== undefined) {
+      applySection(key, remote.core[key]);
+    }
+  });
+
+  const mine = new Map();
+  const merged = new Map();
+
+  (APP.state.transactions || []).forEach(function (transaction) {
+    if (transaction && transaction.id) {
+      mine.set(transaction.id, transaction);
+    }
+  });
+
+  function editedHere(id) {
+    return fingerprint(JSON.stringify(mine.get(id))) !== base.transactions[id];
+  }
+
+  remote.transactions.forEach(function (json, id) {
+    if (mine.has(id) && editedHere(id)) {
+      merged.set(id, mine.get(id));
+    } else if (mine.has(id) || base.transactions[id] === undefined ||
+      fingerprint(json) !== base.transactions[id]) {
+      // Unchanged here, new from another device, or changed elsewhere after being
+      // deleted here: the cloud's version.
+      merged.set(id, JSON.parse(json));
+    }
+    // Otherwise it was deleted on this device since the last sync, so it stays deleted.
+  });
+
+  mine.forEach(function (transaction, id) {
+    if (!remote.transactions.has(id) && (base.transactions[id] === undefined || editedHere(id))) {
+      // Added on this device, or edited here after another device deleted it.
+      merged.set(id, transaction);
+    }
+  });
+
+  APP.state.transactions = Array.from(merged.values());
 }
 
 function askWhichData(remoteCount) {
@@ -406,49 +585,60 @@ async function connect(user) {
   }
 
   const linked = storage("get", LINKED_KEY) === user.uid;
-  const dirty = linked && storage("get", DIRTY_KEY) === "1";
+  const base = linked ? loadBase(user.uid) : null;
   let mode = "cloud";
 
   if (!remote.core) {
     mode = "upload";
-  } else if (dirty) {
+  } else if (base) {
     mode = "merge";
+  } else if (linked && storage("get", DIRTY_KEY) === "1") {
+    mode = "legacy-merge";
   } else if (!linked && localHasData()) {
     mode = await askWhichData(remote.transactions.size);
   }
 
-  if (mode === "cloud") {
-    applyCore(remote.core);
-    APP.state.transactions = Array.from(remote.transactions.values()).map(function (json) {
-      return JSON.parse(json);
-    });
-  }
+  if (mode === "cloud" || mode === "legacy-merge") {
+    const localTransactions = APP.state.transactions || [];
 
-  if (mode === "merge") {
-    // Edits made offline before the cloud connected: keep this device's settings and
-    // budgets, and combine transactions (this device's version wins on conflicts).
+    Object.keys(remote.core).forEach(function (key) {
+      applySection(key, remote.core[key]);
+    });
+
     const byId = new Map();
 
     remote.transactions.forEach(function (json, id) {
       byId.set(id, JSON.parse(json));
     });
 
-    (APP.state.transactions || []).forEach(function (transaction) {
-      byId.set(transaction.id, transaction);
-    });
+    if (mode === "legacy-merge") {
+      // Updated from an older version with offline edits but no base: keep this
+      // device's transactions too (its version wins on conflicts).
+      localTransactions.forEach(function (transaction) {
+        byId.set(transaction.id, transaction);
+      });
+    }
 
     APP.state.transactions = Array.from(byId.values());
   }
 
+  if (mode === "merge") {
+    mergeWithBase(remote, base);
+  }
+
   // What the cloud holds now; the first push writes only the differences.
-  syncedCore = mode === "cloud" ? remote.core : (mode === "upload" ? null : remote.core);
+  syncedCore = mode === "upload" ? {} : Object.assign({}, remote.core);
   syncedTransactions = mode === "upload" ? new Map() : new Map(remote.transactions);
+  writeAllCore = remote.legacy;
 
   storage("set", LINKED_KEY, user.uid);
+  storage("remove", DIRTY_KEY);
   cloud.ready = true;
 
   APP.controller.normalizeState();
   APP.controller.commit();
+  // Send any differences now rather than after the usual short delay.
+  flush();
   listen();
 
   if (mode === "upload") {
@@ -589,6 +779,7 @@ async function leave(confirmFirst) {
   cloud.ready = false;
 
   storage("remove", LINKED_KEY);
+  storage("remove", BASE_KEY);
   storage("remove", DIRTY_KEY);
   storage("remove", APP.config.storageKey);
 
@@ -629,6 +820,15 @@ function start() {
     schedulePush();
     return result;
   };
+
+  // Phones suspend or close an app in the background, so send any waiting save as it goes.
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") {
+      flush();
+    }
+  });
+
+  window.addEventListener("pagehide", flush);
 
   window.addEventListener("online", function () {
     if (cloud.ready) {
@@ -715,7 +915,7 @@ async function main() {
 
   ({ GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithRedirect,
     getRedirectResult, signOut } = authModule);
-  ({ doc, getDoc, getDocs, onSnapshot, writeBatch, serverTimestamp } = firestoreModule);
+  ({ doc, getDoc, getDocs, onSnapshot, writeBatch, serverTimestamp, deleteField } = firestoreModule);
 
   const firebaseApp = appModule.initializeApp(firebaseConfig);
 

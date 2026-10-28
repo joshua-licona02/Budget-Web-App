@@ -195,4 +195,113 @@
 
     return wrap;
   };
+
+  // Phone layout: transactions as tappable rows grouped under their date. Tapping a row
+  // opens it for editing (delete is in the edit form).
+  APP.tables.transactionList = function (transactions, options) {
+    // Date headings only make sense when the list is sorted by date.
+    var grouped = !options || options.grouped !== false;
+    var roundUpsById = {};
+    var categories = APP.model.categories().byId;
+    var list = APP.dom.el("div", "transaction-list");
+    var currentDate = null;
+    var group = null;
+
+    APP.state.transactions.forEach(function (item) {
+      if (item.roundUpFor) {
+        roundUpsById[item.id] = item;
+      }
+    });
+
+    if (!transactions.length) {
+      list.appendChild(APP.dom.el("p", "transaction-list-empty", "No transactions match the current filters."));
+      return list;
+    }
+
+    transactions.forEach(function (transaction) {
+      if (!group || (grouped && transaction.date !== currentDate)) {
+        currentDate = transaction.date;
+        group = APP.dom.el("div", "transaction-day");
+
+        if (grouped) {
+          group.appendChild(APP.dom.el("h3", "transaction-day-label", APP.tables.dayLabel(transaction.date)));
+        }
+
+        list.appendChild(group);
+      }
+
+      var category = categories[transaction.categoryId];
+      var tone = APP.tables.transactionTone(transaction);
+      var row = APP.dom.el("button", "transaction-item " + tone.typeClass);
+      var main = APP.dom.el("span", "transaction-item-main");
+      var amount = APP.dom.el("span", "transaction-item-amount " + tone.amountClass,
+        tone.sign + APP.utils.currency(transaction.amount));
+      var type = APP.tables.transactionType(transaction);
+      var details = [];
+
+      if (!grouped) {
+        details.push(APP.tables.dayLabel(transaction.date));
+      }
+
+      if (category) {
+        details.push(category.name);
+      } else if (APP.model.classify(transaction) !== "income") {
+        details.push("Unassigned");
+      }
+
+      if (type !== "Expense") {
+        details.push(type);
+      }
+
+      if (transaction.notes) {
+        details.push(transaction.notes);
+      }
+
+      row.type = "button";
+      row.dataset.action = "edit-transaction";
+      row.dataset.id = transaction.id;
+
+      main.appendChild(APP.dom.el("strong", "", transaction.description || "Untitled"));
+      main.appendChild(APP.dom.el("small", "", details.join(" · ")));
+
+      var roundUp = transaction.roundUpId ? roundUpsById[transaction.roundUpId] : null;
+
+      if (roundUp) {
+        amount.appendChild(APP.dom.el("small", "round-up-note",
+          "+" + APP.utils.currency(roundUp.amount) + " rounded up"));
+      }
+
+      row.appendChild(APP.dom.el("span", "transaction-item-dot"));
+      row.appendChild(main);
+      row.appendChild(amount);
+      group.appendChild(row);
+    });
+
+    return list;
+  };
+
+  // "Today", "Yesterday", or e.g. "Mon, Oct 27" (with the year when it isn't this year).
+  APP.tables.dayLabel = function (isoDate) {
+    var parts = String(isoDate || "").split("-");
+
+    if (parts.length !== 3) {
+      return isoDate || "No date";
+    }
+
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    var today = new Date();
+    var yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+      return "Today";
+    }
+
+    if (date.toDateString() === yesterday.toDateString()) {
+      return "Yesterday";
+    }
+
+    return date.toLocaleDateString("en-US", date.getFullYear() === today.getFullYear() ?
+      { weekday: "short", month: "short", day: "numeric" } :
+      { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  };
 }());

@@ -3872,8 +3872,13 @@
       );
     });
 
-    APP.dom.refs.sidebar.classList.remove("open");
+    APP.controller.setSidebar(false);
     APP.store.save();
+  };
+
+  APP.controller.setSidebar = function (open) {
+    APP.dom.refs.sidebar.classList.toggle("open", open);
+    document.body.classList.toggle("sidebar-open", open);
   };
 
   APP.controller.importTransactions = function (file) {
@@ -3995,8 +4000,22 @@
       });
     });
 
+    // On phones the sidebar slides over the page; tapping the dimmed page closes it.
+    var backdrop = APP.dom.el("div", "sidebar-backdrop");
+
+    backdrop.addEventListener("click", function () {
+      APP.controller.setSidebar(false);
+    });
+    APP.dom.refs.sidebar.parentNode.insertBefore(backdrop, APP.dom.refs.sidebar.nextSibling);
+
     APP.dom.refs.menuButton.addEventListener("click", function () {
-      APP.dom.refs.sidebar.classList.toggle("open");
+      APP.controller.setSidebar(!APP.dom.refs.sidebar.classList.contains("open"));
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && APP.dom.refs.sidebar.classList.contains("open")) {
+        APP.controller.setSidebar(false);
+      }
     });
 
     APP.dom.refs.month.addEventListener("change", function () {
