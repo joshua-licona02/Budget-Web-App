@@ -13,6 +13,10 @@
 // kind "gemma4": Gemma 4 E2B/E4B, loaded text-only through Gemma4ForCausalLM.
 // kind "causal": an ordinary text model (Gemma 3 1B, Qwen3 0.6B).
 import {
+  env,
+  ones,
+  Tensor,
+  DynamicCache,
   AutoProcessor,
   AutoTokenizer,
   AutoModelForCausalLM,
@@ -20,6 +24,11 @@ import {
   TextStreamer,
   InterruptableStoppingCriteria
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js";
+
+// The prompt is read this many tokens at a time. Reading it all at once needs GPU memory
+// that grows with the square of its length (about 4 GB for a 2,300-token prompt on Qwen3
+// 0.6B); in pieces it stays small.
+const PREFILL_CHUNK = 128;
 
 // Must match Transformers.js: its browser cache name and its cache keys
 // (https://huggingface.co/<model>/resolve/main/<file>).
@@ -105,12 +114,20 @@ async function download(modelId, sessions, dtype) {
       }
     });
 
-    await cache.put(file.url, new Response(response.body.pipeThrough(counter), {
-      headers: {
-        "Content-Type": response.headers.get("Content-Type") || "application/octet-stream",
-        "Content-Length": String(file.size || received)
-      }
-    }));
+    try {
+      await cache.put(file.url, new Response(response.body.pipeThrough(counter), {
+        headers: {
+          "Content-Type": response.headers.get("Content-Type") || "application/octet-stream",
+          "Content-Length": String(file.size || received)
+        }
+      }));
+    } catch (error) {
+      // Some browsers refuse to store very large files. Load this session straight from
+      // the network into memory instead; it will download again next time.
+      post({ type: "notSaved", message: error.message });
+      env.useBrowserCache = false;
+      return;
+    }
 
     done += file.size || received;
   }
@@ -205,16 +222,70 @@ async function generate(messages, think, maxNewTokens) {
 
   stopping.reset();
 
-  await model.generate({
-    ...inputs,
-    max_new_tokens: maxNewTokens || 1024,
-    do_sample: true,
-    temperature: 0.4,
-    top_p: 0.95,
-    top_k: 64,
-    streamer: streamer,
-    stopping_criteria: stopping
-  });
+  // Ordinary text models read the prompt in pieces first; generate() then sees the
+  // filled cache and only reads what's left. (Gemma 4 runs on laptops and reads it whole.)
+  const past = kind === "gemma4" ? null : await prefill(inputs.input_ids);
+
+  if (stopping.interrupted) {
+    if (past) {
+      await past.dispose();
+    }
+    return;
+  }
+
+  try {
+    await model.generate({
+      ...inputs,
+      ...(past ? { past_key_values: past } : {}),
+      max_new_tokens: maxNewTokens || 1024,
+      do_sample: true,
+      temperature: 0.4,
+      top_p: 0.95,
+      top_k: 64,
+      streamer: streamer,
+      stopping_criteria: stopping
+    });
+  } finally {
+    // generate() keeps a cache it was given; free its GPU memory now.
+    if (past) {
+      await past.dispose();
+    }
+  }
+}
+
+// Reads all but the last prompt token PREFILL_CHUNK tokens at a time, building the
+// key/value cache. Stops early if the user presses Stop.
+async function prefill(inputIds) {
+  const length = inputIds.dims[1];
+  let past = null;
+
+  for (let start = 0; start < length - 1 && !stopping.interrupted; start += PREFILL_CHUNK) {
+    const end = Math.min(start + PREFILL_CHUNK, length - 1);
+    const outputs = await model.forward({
+      input_ids: inputIds.slice(null, [start, end]),
+      attention_mask: ones([1, end]),
+      past_key_values: past,
+      num_logits_to_keep: new Tensor("int64", [1n], [])
+    });
+    const entries = {};
+
+    for (const name in outputs) {
+      if (name.startsWith("present")) {
+        entries[name.replace("present", "past_key_values")] = outputs[name];
+      } else if (outputs[name] && outputs[name].dispose) {
+        outputs[name].dispose();
+      }
+    }
+
+    // update() frees the previous piece's GPU tensors.
+    if (past) {
+      past.update(entries);
+    } else {
+      past = new DynamicCache(entries);
+    }
+  }
+
+  return past;
 }
 
 self.addEventListener("message", async (event) => {

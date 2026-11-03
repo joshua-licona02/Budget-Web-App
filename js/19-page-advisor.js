@@ -158,6 +158,98 @@
     };
   };
 
+  // A shorter summary for the small phone models. Reading the prompt takes memory that grows
+  // with the square of its length, and the full summary (~2,300 tokens) needed over 2 GB of
+  // GPU memory on Qwen3 0.6B, more than an iPhone allows a page.
+  APP.pages.advisor.compactSummary = function () {
+    var round = APP.pages.advisor.round;
+    var month = APP.state.settings.selectedMonth;
+    var current = APP.pages.advisor.monthTotals(month);
+    var history = [];
+
+    for (var offset = 3; offset >= 1; offset -= 1) {
+      var past = APP.pages.advisor.monthTotals(APP.analytics.addMonths(month, -offset));
+      history.push({
+        month: past.month,
+        income: past.income,
+        spending: past.operatingSpendingAfterRefunds,
+        saved: past.savingsContributions,
+        net: past.netCashFlow
+      });
+    }
+
+    // Small models compare numbers unreliably, so the app works out what's over and under
+    // budget and states it outright.
+    var categories = APP.pages.advisor.categoryBreakdown(month).filter(function (row) {
+      return row.budgeted || row.spent;
+    });
+
+    var overBudget = categories.filter(function (row) {
+      return row.spent - row.budgeted >= 0.01;
+    }).sort(function (a, b) {
+      return (b.spent - b.budgeted) - (a.spent - a.budgeted);
+    }).map(function (row) {
+      return { name: row.category, overBy: round(row.spent - row.budgeted) };
+    });
+
+    return {
+      today: APP.utils.isoDate(new Date()),
+      month: month,
+      overBudget: overBudget.length ? overBudget : "No categories are over budget.",
+      thisMonth: {
+        income: current.income,
+        expectedIncome: round(APP.model.budget(month, false).expectedIncome),
+        spending: current.operatingSpendingAfterRefunds,
+        saved: current.savingsContributions,
+        debtPayments: current.debtPayments,
+        net: current.netCashFlow
+      },
+      previousMonths: history,
+      categories: categories.map(function (row) {
+        return { name: row.category, budget: row.budgeted, spent: row.spent, left: round(row.budgeted - row.spent) };
+      }),
+      savingsFunds: APP.analytics.savingsFunds(month).filter(function (fund) {
+        return fund.balance || fund.monthlyGoal || fund.eventualGoal;
+      }).map(function (fund) {
+        var item = { name: fund.category.name, balance: round(fund.balance) };
+
+        if (fund.monthlyGoal) {
+          item.monthlyGoal = round(fund.monthlyGoal);
+        }
+
+        if (fund.eventualGoal) {
+          item.goal = round(fund.eventualGoal);
+        }
+
+        return item;
+      }),
+      debts: APP.analytics.debts().filter(function (item) {
+        return !item.debt.archived;
+      }).map(function (item) {
+        return {
+          name: item.debt.name,
+          balance: round(item.projectedBalance),
+          apr: item.debt.apr,
+          minimum: round(item.debt.minimumMonthlyPayment),
+          paidThisMonth: round(item.paymentThisMonth)
+        };
+      }),
+      netMonthlySalary: round(APP.analytics.salary().netMonthly)
+    };
+  };
+
+  APP.pages.advisor.compactSystemPrompt = function () {
+    return [
+      "You are a budgeting assistant in the user's budget app. Their data is below as JSON (amounts in " +
+        (APP.state.settings.currency || APP.config.currency) + "); every figure is correct.",
+      "Use only this data and never invent numbers. \"overBudget\" lists every category over budget, largest first; \"left\" is budget minus spent (negative means over).",
+      "Be brief and practical, and name categories and amounts.",
+      "This is planning help, not professional financial advice.",
+      "",
+      JSON.stringify(APP.pages.advisor.compactSummary())
+    ].join("\n");
+  };
+
   APP.pages.advisor.systemPrompt = function () {
     return [
       "You are a personal financial planning assistant built into the user's budget dashboard.",
@@ -482,8 +574,14 @@
       APP.pages.advisor.paint();
     }
 
-    var messages = [{ role: "system", content: APP.pages.advisor.systemPrompt() }]
-      .concat(history)
+    // Phone models get the compact summary and only the last two exchanges, to keep the
+    // prompt (and the memory needed to read it) small.
+    var small = engine === "browser" && local.models[local.modelKey()].phone;
+    var messages = [{
+      role: "system",
+      content: small ? APP.pages.advisor.compactSystemPrompt() : APP.pages.advisor.systemPrompt()
+    }]
+      .concat(small ? history.slice(-4) : history)
       .concat([{ role: "user", content: question }]);
 
     if (engine === "browser") {
@@ -491,6 +589,8 @@
       var stopped = false;
       var job = local.generate(messages, {
         think: chat.think,
+        // Memory grows with every word of the reply, so phone answers stay short.
+        maxNewTokens: small ? 500 : 1024,
         onText: function (text) {
           var parsed;
 
@@ -875,7 +975,12 @@
     if (readyHere) {
       box.classList.add("is-ready");
       line("Ready · " + model.name + " is running on this device. Your data doesn't leave it.", "advisor-local-title");
-      box.appendChild(removeButton());
+
+      if (state.notSaved === key) {
+        line("This browser couldn't save the model, so it will download again next time.", "muted");
+      } else {
+        box.appendChild(removeButton());
+      }
       return;
     }
 

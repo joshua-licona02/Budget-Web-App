@@ -256,6 +256,10 @@
       } else if (data.type === "downloaded") {
         storage("set", doneKey(key), JSON.stringify(data.files));
         local.state.downloaded[key] = true;
+      } else if (data.type === "notSaved") {
+        // Running from memory this session; it downloads again next visit.
+        local.state.notSaved = key;
+        changed();
       } else if (data.type === "ready") {
         markActive(key, "");
         local.state.status = "ready";
