@@ -11,7 +11,7 @@
     savings: ["Savings & Goals", "Monthly contributions, eventual savings goals, and target progress"],
     debts: ["Debt Tracking", "Confirmed balances, projected balances, and allocated payment history"],
     accounts: ["Accounts", "Check your budget against your real balances"],
-    advisor: ["Ollama Advisor", "Optional local financial-planning analysis"],
+    advisor: ["Advisor", "Private, on-device financial-planning analysis"],
     settings: ["Settings", "Local data and optional Ollama connection"]
   };
 

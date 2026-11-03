@@ -1435,3 +1435,17 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
   .savings-summary .summary-card,.debt-summary-grid .summary-card{padding:12px}
   .savings-summary .summary-card strong,.debt-summary-grid .summary-card strong{font-size:1.1rem}
 }
+
+/* ---- Advisor engine choice and in-browser model status */
+.advisor-engine{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:12px}
+.advisor-engine-label{color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.advisor-engine .segmented{flex:1 1 320px;grid-template-columns:repeat(2,1fr);max-width:520px}
+.advisor-local-status{display:grid;gap:8px;justify-items:start;margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.advisor-local-status p{margin:0;font-size:.86rem}
+.advisor-local-title{color:var(--text-soft)}
+.advisor-local-status.is-ready{border-color:var(--green);background:var(--tint-good)}
+.advisor-local-status.is-ready .advisor-local-title{color:var(--good-text)}
+.advisor-local-status.is-warning{border-color:var(--warn-border);background:var(--tint-warn)}
+.advisor-local-status.is-error{border-color:var(--red);background:var(--tint-bad);color:var(--bad-text)}
+.advisor-progress{width:100%}
+.advisor-progress>span{background:var(--blue);transition:width .3s}

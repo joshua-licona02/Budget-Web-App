@@ -30,6 +30,13 @@
 
   APP.pages.advisor.refs = {};
 
+  // "ollama" (the Ollama app on this computer) or "browser" (Gemma 4 on this device's GPU).
+  // Stored with the Ollama settings, which stay on each device rather than syncing.
+  APP.pages.advisor.engine = function () {
+    var ollama = APP.state.settings.ollama || {};
+    return ollama.engine === "browser" ? "browser" : "ollama";
+  };
+
   APP.pages.advisor.endpoint = function () {
     var ollama = APP.state.settings.ollama || {};
     return (APP.utils.text(ollama.endpoint) || APP.pages.advisor.defaultEndpoint)
@@ -397,8 +404,18 @@
       return;
     }
 
-    if (!ollama.model) {
+    var engine = APP.pages.advisor.engine();
+    var local = APP.localLLM;
+
+    if (engine === "ollama" && !ollama.model) {
       APP.dom.toast("Choose a model first.", "danger");
+      return;
+    }
+
+    // Never start a multi-gigabyte download from a question; that's the Download button's job.
+    if (engine === "browser" && local.state.status !== "ready" &&
+        !local.state.downloaded[local.modelKey()]) {
+      APP.dom.toast("Download the model first (button above the chat).", "danger");
       return;
     }
 
@@ -412,10 +429,12 @@
       role: "assistant",
       content: "",
       thinking: "",
-      model: ollama.model,
+      model: engine === "browser" ? local.models[local.modelKey()].name + " (this device)" : ollama.model,
       month: APP.state.settings.selectedMonth,
       pending: true,
-      status: "Sending your data summary to the model..."
+      status: engine === "browser" ?
+        (local.state.status === "ready" ? "Reading your data on this device..." : "Loading the model on this device...") :
+        "Sending your data summary to the model..."
     };
 
     chat.messages.push({ role: "user", content: question });
@@ -463,6 +482,42 @@
       APP.pages.advisor.paint();
     }
 
+    var messages = [{ role: "system", content: APP.pages.advisor.systemPrompt() }]
+      .concat(history)
+      .concat([{ role: "user", content: question }]);
+
+    if (engine === "browser") {
+      var raw = "";
+      var stopped = false;
+      var job = local.generate(messages, {
+        think: chat.think,
+        onText: function (text) {
+          var parsed;
+
+          raw += text;
+          parsed = local.parse(raw);
+          reply.thinking = parsed.thinking;
+          reply.content = parsed.content;
+          reply.status = parsed.content || parsed.thinking ? "" : "Thinking...";
+          APP.pages.advisor.schedulePaint();
+        }
+      });
+
+      chat.abort = {
+        abort: function () {
+          stopped = true;
+          job.abort();
+        }
+      };
+
+      job.promise.then(function () {
+        finish(stopped ? "Stopped." : "");
+      }).catch(function (error) {
+        finish(stopped || error.name === "AbortError" ? "Stopped." : "Advisor error: " + error.message);
+      });
+      return;
+    }
+
     function handleLine(line) {
       if (!line.trim()) {
         return;
@@ -500,9 +555,7 @@
           num_ctx: Math.max(2048, APP.utils.number(ollama.contextLength) || 8192),
           temperature: 0.3
         },
-        messages: [{ role: "system", content: APP.pages.advisor.systemPrompt() }]
-          .concat(history)
-          .concat([{ role: "user", content: question }])
+        messages: messages
       })
     }).then(function (response) {
       if (!response.ok) {
@@ -598,18 +651,254 @@
     var ollama = APP.state.settings.ollama;
     var refs = APP.pages.advisor.refs = {};
 
+    var engine = APP.pages.advisor.engine();
+
     APP.dom.clear(root);
 
-    if (chat.models === null && !chat.modelsError && !chat.modelsLoading &&
+    if (engine === "ollama" && chat.models === null && !chat.modelsError && !chat.modelsLoading &&
         window.location.protocol !== "file:") {
       APP.pages.advisor.loadModels();
     }
 
     root.appendChild(APP.ui.panelHeader(
-      "Ollama financial advisor",
-      "Runs on your local Ollama models, so your data stays on this computer. Advisor output is informational planning support only, not professional financial, tax, investment, payroll, or legal advice."
+      "Financial advisor",
+      "Runs on a model on your own device, so your data stays private. Advisor output is informational planning support only, not professional financial, tax, investment, payroll, or legal advice."
     ));
 
+    root.appendChild(APP.pages.advisor.engineSwitch());
+
+    if (engine === "browser") {
+      root.appendChild(APP.pages.advisor.browserToolbar());
+    } else {
+      APP.pages.advisor.ollamaToolbar(root);
+    }
+
+    APP.pages.advisor.chatArea(root);
+  };
+
+  // Engine picker: a row of two buttons backed by a hidden select.
+  APP.pages.advisor.engineSwitch = function () {
+    var ollama = APP.state.settings.ollama;
+    var wrap = APP.dom.el("div", "advisor-engine");
+    var select = APP.dom.el("select");
+
+    [["ollama", "Ollama (this computer)"], ["browser", "In the browser (Gemma 4)"]].forEach(function (choice) {
+      var option = APP.dom.el("option", "", choice[1]);
+      option.value = choice[0];
+      select.appendChild(option);
+    });
+
+    select.value = APP.pages.advisor.engine();
+    select.hidden = true;
+    select.addEventListener("change", function () {
+      ollama.engine = select.value;
+      APP.store.log("info", "Advisor engine set to " + (select.value === "browser" ? "in-browser Gemma 4" : "Ollama") + ".");
+      APP.store.save();
+      APP.pages.advisor.render();
+    });
+
+    wrap.appendChild(APP.dom.el("span", "advisor-engine-label", "Runs on"));
+    wrap.appendChild(APP.ui.segmented(select, [
+      { value: "ollama", label: "Ollama" },
+      { value: "browser", label: "This device (Gemma 4)" }
+    ]));
+    wrap.appendChild(select);
+    return wrap;
+  };
+
+  APP.pages.advisor.thinkToggle = function () {
+    var chat = APP.pages.advisor.chat;
+    var thinkLabel = APP.dom.el("label", "advisor-check");
+    var think = APP.dom.el("input");
+
+    think.type = "checkbox";
+    think.checked = chat.think;
+    think.addEventListener("change", function () {
+      chat.think = think.checked;
+    });
+    thinkLabel.appendChild(think);
+    thinkLabel.appendChild(document.createTextNode(" Let the model reason first (better for math, much slower)"));
+    return thinkLabel;
+  };
+
+  APP.pages.advisor.browserToolbar = function () {
+    var local = APP.localLLM;
+    var ollama = APP.state.settings.ollama;
+    var refs = APP.pages.advisor.refs;
+    var wrap = APP.dom.el("div", "advisor-local");
+    var toolbar = APP.dom.el("div", "advisor-toolbar");
+
+    var model = APP.ui.field("Model", "browserModel", "select", local.modelKey(), {
+      options: Object.keys(local.models).map(function (key) {
+        return { value: key, label: local.models[key].name + " · " + local.models[key].note };
+      })
+    });
+
+    model.input.addEventListener("change", function () {
+      ollama.browserModel = model.input.value;
+      APP.store.save();
+      local.checkDownloaded(model.input.value);
+      APP.pages.advisor.paintLocal();
+    });
+
+    toolbar.appendChild(model.root);
+    toolbar.appendChild(APP.pages.advisor.thinkToggle());
+    wrap.appendChild(toolbar);
+
+    refs.localStatus = APP.dom.el("div", "advisor-local-status");
+    wrap.appendChild(refs.localStatus);
+
+    // Check WebGPU first: it decides which file format, and so which files, to look for.
+    if (!local.state.support) {
+      local.checkSupport().then(function () {
+        local.checkDownloaded();
+      });
+    } else if (local.state.downloaded[local.modelKey()] === undefined) {
+      local.checkDownloaded();
+    }
+
+    if (!APP.pages.advisor.localListening) {
+      APP.pages.advisor.localListening = true;
+      local.onChange(APP.pages.advisor.paintLocal);
+    }
+
+    APP.pages.advisor.paintLocal();
+    return wrap;
+  };
+
+  // Redraws only the download / status box, so progress updates don't disturb the chat.
+  APP.pages.advisor.paintLocal = function () {
+    var local = APP.localLLM;
+    var box = APP.pages.advisor.refs.localStatus;
+
+    if (!box || !box.isConnected) {
+      return;
+    }
+
+    var key = local.modelKey();
+    var model = local.models[key];
+    var state = local.state;
+    var downloaded = state.downloaded[key];
+    var busyHere = state.status === "loading" && state.loadingKey === key;
+    var readyHere = state.status === "ready" && state.loadedKey === key;
+
+    APP.dom.clear(box);
+    box.className = "advisor-local-status";
+
+    function line(text, className) {
+      box.appendChild(APP.dom.el("p", className || "", text));
+    }
+
+    function removeButton() {
+      var remove = APP.ui.button("Remove from this device", "button-quiet");
+
+      remove.addEventListener("click", function () {
+        if (window.confirm("Remove " + model.name + " from this browser? You can download it again later.")) {
+          local.remove(key).then(function () {
+            APP.dom.toast(model.name + " was removed from this device.", "success");
+          });
+        }
+      });
+      return remove;
+    }
+
+    if (!state.support) {
+      line("Checking this device…", "muted");
+      return;
+    }
+
+    if (!state.support.ok) {
+      box.classList.add("is-warning");
+      line(state.support.reason);
+      line("You can still use the Ollama engine on your computer.", "muted");
+      return;
+    }
+
+    if (busyHere) {
+      var progress = state.progress;
+      var bar = APP.dom.el("div", "progress advisor-progress");
+      var fill = APP.dom.el("span");
+
+      fill.style.width = (progress ? Math.min(100, progress.progress) : 0) + "%";
+      bar.appendChild(fill);
+
+      line(downloaded ?
+        "Loading " + model.name + " from this device…" :
+        "Downloading " + model.name + "… keep this page open.", "advisor-local-title");
+      box.appendChild(bar);
+      line(progress && progress.total ?
+        (progress.loaded / 1e9).toFixed(2) + " of " + (progress.total / 1e9).toFixed(2) + " GB · " +
+          Math.floor(progress.progress) + "%" :
+        "Starting…", "muted");
+      return;
+    }
+
+    if (state.status === "error" && state.loadingKey === key) {
+      var retry = APP.ui.button("Try again", "button-secondary");
+
+      box.classList.add("is-error");
+      line(state.error);
+      retry.addEventListener("click", function () {
+        local.load().catch(function () {});
+      });
+      box.appendChild(retry);
+      return;
+    }
+
+    if (readyHere) {
+      box.classList.add("is-ready");
+      line("Ready · " + model.name + " is running on this device. Your data doesn't leave it.", "advisor-local-title");
+      box.appendChild(removeButton());
+      return;
+    }
+
+    if (downloaded === undefined) {
+      line("Checking for a downloaded model…", "muted");
+      return;
+    }
+
+    if (downloaded) {
+      line(model.name + " is downloaded. It loads into memory when you send your first question.", "advisor-local-title");
+      box.appendChild(removeButton());
+      return;
+    }
+
+    var download = APP.ui.button("Download " + model.name + " (" + local.sizeLabel(key) + ")", "button-primary");
+
+    line("Runs entirely on this device, so your data never leaves it. It's a one-time download per browser; use Wi-Fi.", "advisor-local-title");
+
+    if (key === "e4b") {
+      line("E4B needs a lot of memory. On phones, E2B is the better choice.", "muted");
+    }
+
+    download.addEventListener("click", function () {
+      var check = navigator.storage && navigator.storage.estimate ?
+        navigator.storage.estimate() :
+        Promise.resolve(null);
+
+      check.then(function (estimate) {
+        var needed = model.sizeGB[local.dtype()] * 1e9;
+        var free = estimate && estimate.quota ? estimate.quota - estimate.usage : Infinity;
+
+        if (free < needed && !window.confirm("This browser reports only about " + (free / 1e9).toFixed(1) +
+          " GB of space for this site, and the model needs " + local.sizeLabel(key) + ". Try anyway?")) {
+          return;
+        }
+
+        local.load().then(function () {
+          APP.dom.toast(model.name + " is ready on this device.", "success");
+        }).catch(function () {
+          // The status box shows the error.
+        });
+      });
+    });
+
+    box.appendChild(download);
+  };
+
+  APP.pages.advisor.ollamaToolbar = function (root) {
+    var chat = APP.pages.advisor.chat;
+    var ollama = APP.state.settings.ollama;
     var note = APP.pages.advisor.connectionNote();
 
     if (note) {
@@ -643,16 +932,6 @@
       APP.store.save();
     });
 
-    var thinkLabel = APP.dom.el("label", "advisor-check");
-    var think = APP.dom.el("input");
-    think.type = "checkbox";
-    think.checked = chat.think;
-    think.addEventListener("change", function () {
-      chat.think = think.checked;
-    });
-    thinkLabel.appendChild(think);
-    thinkLabel.appendChild(document.createTextNode(" Let the model reason first (better for math, much slower)"));
-
     var refresh = APP.ui.button("Refresh models", "button-quiet");
     refresh.addEventListener("click", function () {
       chat.models = null;
@@ -663,8 +942,14 @@
 
     toolbar.appendChild(model.root);
     toolbar.appendChild(refresh);
-    toolbar.appendChild(thinkLabel);
+    toolbar.appendChild(APP.pages.advisor.thinkToggle());
     root.appendChild(toolbar);
+  };
+
+  // The conversation, suggestions, question box and data preview, shared by both engines.
+  APP.pages.advisor.chatArea = function (root) {
+    var chat = APP.pages.advisor.chat;
+    var refs = APP.pages.advisor.refs;
 
     refs.log = APP.dom.el("div", "advisor-log");
     root.appendChild(refs.log);
