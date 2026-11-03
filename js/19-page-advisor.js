@@ -682,7 +682,7 @@
     var wrap = APP.dom.el("div", "advisor-engine");
     var select = APP.dom.el("select");
 
-    [["ollama", "Ollama (this computer)"], ["browser", "In the browser (Gemma 4)"]].forEach(function (choice) {
+    [["ollama", "Ollama (this computer)"], ["browser", "In the browser (this device)"]].forEach(function (choice) {
       var option = APP.dom.el("option", "", choice[1]);
       option.value = choice[0];
       select.appendChild(option);
@@ -692,7 +692,7 @@
     select.hidden = true;
     select.addEventListener("change", function () {
       ollama.engine = select.value;
-      APP.store.log("info", "Advisor engine set to " + (select.value === "browser" ? "in-browser Gemma 4" : "Ollama") + ".");
+      APP.store.log("info", "Advisor engine set to " + (select.value === "browser" ? "in-browser model" : "Ollama") + ".");
       APP.store.save();
       APP.pages.advisor.render();
     });
@@ -700,7 +700,7 @@
     wrap.appendChild(APP.dom.el("span", "advisor-engine-label", "Runs on"));
     wrap.appendChild(APP.ui.segmented(select, [
       { value: "ollama", label: "Ollama" },
-      { value: "browser", label: "This device (Gemma 4)" }
+      { value: "browser", label: "This device" }
     ]));
     wrap.appendChild(select);
     return wrap;
@@ -802,6 +802,31 @@
       return remove;
     }
 
+    // The page closed last time while the model was busy: almost always memory.
+    if (state.crashed && !busyHere && !readyHere) {
+      var crashedModel = local.models[state.crashed.key];
+      var smaller = state.crashed.key === "qwen3" ? null :
+        (crashedModel.phone ? local.models.qwen3 : local.models.gemma3);
+      var notice = APP.dom.el("div", "advisor-crash");
+      var dismiss = APP.ui.button("Dismiss", "button-quiet");
+
+      notice.appendChild(APP.dom.el("strong", "", {
+        download: "The page closed during the last download of " + crashedModel.name + ".",
+        load: "The page closed while loading " + crashedModel.name + ".",
+        answer: "The page closed while " + crashedModel.name + " was answering."
+      }[state.crashed.phase] || "The page closed while " + crashedModel.name + " was busy."));
+
+      notice.appendChild(APP.dom.el("p", "", state.crashed.phase === "download" ?
+        "Finished files were kept, so downloading again picks up where it stopped. If it keeps closing, this device is short on memory" +
+          (smaller ? "; try " + smaller.name + "." : ".") :
+        "That usually means this device ran out of memory for it." +
+          (smaller ? " Try " + smaller.name + ", which needs less." : " Close other apps and tabs and try again.")));
+
+      dismiss.addEventListener("click", local.dismissCrash);
+      notice.appendChild(dismiss);
+      box.appendChild(notice);
+    }
+
     if (!state.support) {
       line("Checking this device…", "muted");
       return;
@@ -818,16 +843,18 @@
       var progress = state.progress;
       var bar = APP.dom.el("div", "progress advisor-progress");
       var fill = APP.dom.el("span");
+      var loadingFromDisk = state.phase === "load";
 
       fill.style.width = (progress ? Math.min(100, progress.progress) : 0) + "%";
       bar.appendChild(fill);
 
-      line(downloaded ?
-        "Loading " + model.name + " from this device…" :
-        "Downloading " + model.name + "… keep this page open.", "advisor-local-title");
+      line(loadingFromDisk ?
+        "Loading " + model.name + " into memory…" :
+        (downloaded ? "Checking " + model.name + "'s files…" : "Downloading " + model.name + "… keep this page open."),
+        "advisor-local-title");
       box.appendChild(bar);
       line(progress && progress.total ?
-        (progress.loaded / 1e9).toFixed(2) + " of " + (progress.total / 1e9).toFixed(2) + " GB · " +
+        (loadingFromDisk ? "" : (progress.loaded / 1e9).toFixed(2) + " of " + (progress.total / 1e9).toFixed(2) + " GB · ") +
           Math.floor(progress.progress) + "%" :
         "Starting…", "muted");
       return;
@@ -857,6 +884,10 @@
       return;
     }
 
+    if (!model.phone && local.isPhone()) {
+      line(model.name + " needs more memory than a phone browser allows a single page. Choose Gemma 3 1B or Qwen3 0.6B on this device.", "warning-text");
+    }
+
     if (downloaded) {
       line(model.name + " is downloaded. It loads into memory when you send your first question.", "advisor-local-title");
       box.appendChild(removeButton());
@@ -867,17 +898,13 @@
 
     line("Runs entirely on this device, so your data never leaves it. It's a one-time download per browser; use Wi-Fi.", "advisor-local-title");
 
-    if (key === "e4b") {
-      line("E4B needs a lot of memory. On phones, E2B is the better choice.", "muted");
-    }
-
     download.addEventListener("click", function () {
       var check = navigator.storage && navigator.storage.estimate ?
         navigator.storage.estimate() :
         Promise.resolve(null);
 
       check.then(function (estimate) {
-        var needed = model.sizeGB[local.dtype()] * 1e9;
+        var needed = local.sizeGB(key) * 1e9;
         var free = estimate && estimate.quota ? estimate.quota - estimate.usage : Infinity;
 
         if (free < needed && !window.confirm("This browser reports only about " + (free / 1e9).toFixed(1) +

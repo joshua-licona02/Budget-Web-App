@@ -1,27 +1,59 @@
 (function () {
   "use strict";
 
-  // In-browser advisor engine: Gemma 4 running on this device's GPU through WebGPU, in a
-  // worker (js/gemma-worker.js). The model downloads once per browser, only when the user
-  // asks, and is then read from the browser's cache.
+  // In-browser advisor engine: a small open model running on this device's GPU through
+  // WebGPU, in a worker (js/gemma-worker.js). A model downloads once per browser, only when
+  // the user asks, and is then read from the browser's cache.
   var APP = window.APP;
   var local = APP.localLLM = {};
 
-  // Sizes are the text-only files (decoder + token embeddings) for each format.
+  // Phones allow a single page far less memory than the phone has (an iPhone 16 Pro page
+  // closed at about 1.6 GB), and loading briefly needs about twice the file size, so the
+  // phone models are the ones under 1 GB. Sizes are the weight files for each format.
   local.models = {
+    gemma3: {
+      id: "onnx-community/gemma-3-1b-it-ONNX",
+      name: "Gemma 3 1B",
+      note: "For phones · better writing",
+      kind: "causal",
+      sessions: ["model"],
+      // Gemma's activations overflow 16-bit floats, so it always uses q4.
+      dtypes: ["q4"],
+      sizeGB: { q4: 0.86 },
+      phone: true
+    },
+    qwen3: {
+      id: "onnx-community/Qwen3-0.6B-ONNX",
+      name: "Qwen3 0.6B",
+      note: "For phones · lightest",
+      kind: "causal",
+      sessions: ["model"],
+      dtypes: ["q4f16", "q4"],
+      sizeGB: { q4f16: 0.57, q4: 0.92 },
+      phone: true
+    },
     e2b: {
       id: "onnx-community/gemma-4-E2B-it-ONNX",
       name: "Gemma 4 E2B",
-      note: "Best for phones",
+      note: "For laptops · smarter",
+      kind: "gemma4",
+      sessions: ["decoder_model_merged", "embed_tokens"],
+      dtypes: ["q4f16", "q4"],
       sizeGB: { q4f16: 3.1, q4: 3.6 }
     },
     e4b: {
       id: "onnx-community/gemma-4-E4B-it-ONNX",
       name: "Gemma 4 E4B",
-      note: "Smarter, for laptops",
+      note: "For powerful laptops · smartest",
+      kind: "gemma4",
+      sessions: ["decoder_model_merged", "embed_tokens"],
+      dtypes: ["q4f16", "q4"],
       sizeGB: { q4f16: 4.9, q4: 5.6 }
     }
   };
+
+  var DONE_PREFIX = "personalBudgetDashboard.localModel.done.";
+  var ACTIVE_KEY = "personalBudgetDashboard.localModel.active";
 
   local.CACHE_NAME = "transformers-cache";
 
@@ -29,15 +61,65 @@
     support: null,      // null until checked, then { ok, reason, f16 }
     downloaded: {},     // modelKey -> true/false once checked
     status: "idle",     // idle | loading | ready | error
+    phase: "",          // download | load, while loading
+    loadingKey: "",
     loadedKey: "",
     progress: null,     // { loaded, total, progress } while loading
-    error: ""
+    error: "",
+    crashed: null       // { key, phase } when the page closed mid-download, -load or -answer
   };
 
   var worker = null;
   var listeners = [];
   var pending = null;   // handlers for the current generate() call
   var loadWaiters = [];
+
+  function storage(action, key, value) {
+    try {
+      if (action === "get") {
+        return window.localStorage.getItem(key);
+      }
+
+      if (action === "set") {
+        window.localStorage.setItem(key, value);
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch (error) {
+      // Storage blocked: the crash notice and download marker just aren't remembered.
+    }
+
+    return null;
+  }
+
+  // Remembers what the model was doing, so if the page is closed for using too much memory
+  // the next visit can say so instead of silently starting over.
+  function markActive(key, phase) {
+    if (phase) {
+      storage("set", ACTIVE_KEY, JSON.stringify({ key: key, phase: phase }));
+    } else {
+      storage("remove", ACTIVE_KEY);
+    }
+  }
+
+  (function readCrash() {
+    try {
+      var active = JSON.parse(storage("get", ACTIVE_KEY) || "null");
+
+      if (active && local.models[active.key]) {
+        local.state.crashed = active;
+      }
+    } catch (error) {
+      // Ignore a malformed entry.
+    }
+
+    storage("remove", ACTIVE_KEY);
+  }());
+
+  local.dismissCrash = function () {
+    local.state.crashed = null;
+    changed();
+  };
 
   local.onChange = function (callback) {
     listeners.push(callback);
@@ -53,19 +135,31 @@
     });
   }
 
+  local.isPhone = function () {
+    return /iPhone|iPod|Android.+Mobile/i.test(navigator.userAgent) ||
+      Boolean(window.matchMedia && window.matchMedia("(pointer: coarse) and (max-width: 720px)").matches);
+  };
+
   local.modelKey = function () {
     var key = (APP.state.settings.ollama || {}).browserModel;
-    return local.models[key] ? key : "e2b";
+    return local.models[key] ? key : (local.isPhone() ? "gemma3" : "e2b");
   };
 
   // q4f16 is smaller and faster but needs the GPU's 16-bit float support.
-  local.dtype = function () {
-    return local.state.support && local.state.support.f16 ? "q4f16" : "q4";
+  local.dtype = function (key) {
+    var dtypes = local.models[key || local.modelKey()].dtypes;
+    var f16 = local.state.support && local.state.support.f16;
+    return dtypes.indexOf("q4f16") !== -1 && f16 ? "q4f16" : dtypes[dtypes.length - 1];
+  };
+
+  local.sizeGB = function (key) {
+    key = key || local.modelKey();
+    return local.models[key].sizeGB[local.dtype(key)];
   };
 
   local.sizeLabel = function (key) {
-    var model = local.models[key || local.modelKey()];
-    return "about " + model.sizeGB[local.dtype()].toFixed(1) + " GB";
+    var size = local.sizeGB(key);
+    return size < 1 ? Math.round(size * 1000) + " MB" : size.toFixed(1) + " GB";
   };
 
   local.checkSupport = function () {
@@ -100,29 +194,37 @@
     });
   };
 
-  function modelFiles(key) {
-    var dtype = local.dtype();
-    return ["decoder_model_merged_" + dtype + ".onnx", "embed_tokens_" + dtype + ".onnx"].map(function (file) {
-      return local.models[key].id + "/resolve/main/onnx/" + file;
-    });
+  function doneKey(key) {
+    return DONE_PREFIX + local.models[key].id + "|" + local.dtype(key);
   }
 
-  // Downloaded means both weight files for this format are fully in the cache (files are
-  // only cached once complete).
+  // Downloaded means the worker finished saving every weight file and they're all still in
+  // the cache (the browser can clear its storage).
   local.checkDownloaded = function (key) {
     key = key || local.modelKey();
 
-    if (!window.caches) {
+    var files = [];
+
+    try {
+      files = JSON.parse(storage("get", doneKey(key)) || "[]");
+    } catch (error) {
+      files = [];
+    }
+
+    if (!files.length || !window.caches) {
+      local.state.downloaded[key] = false;
+      changed();
       return Promise.resolve(false);
     }
 
     return caches.open(local.CACHE_NAME).then(function (cache) {
-      return cache.keys();
-    }).then(function (requests) {
-      var urls = requests.map(function (request) { return request.url; });
-      var have = modelFiles(key).every(function (file) {
-        return urls.some(function (url) { return url.indexOf(file + "_data") !== -1; });
-      });
+      return Promise.all(files.map(function (url) {
+        return cache.match(url, { ignoreSearch: true }).then(function (hit) {
+          return Boolean(hit);
+        });
+      }));
+    }).then(function (hits) {
+      var have = hits.every(Boolean);
 
       local.state.downloaded[key] = have;
       changed();
@@ -141,15 +243,26 @@
 
     worker.addEventListener("message", function (event) {
       var data = event.data || {};
+      var key = local.state.loadingKey;
 
-      if (data.type === "progress") {
+      if (data.type === "phase") {
+        local.state.phase = data.phase;
+        local.state.progress = null;
+        markActive(key, data.phase);
+        changed();
+      } else if (data.type === "progress") {
         local.state.progress = data;
         changed();
+      } else if (data.type === "downloaded") {
+        storage("set", doneKey(key), JSON.stringify(data.files));
+        local.state.downloaded[key] = true;
       } else if (data.type === "ready") {
+        markActive(key, "");
         local.state.status = "ready";
+        local.state.phase = "";
         local.state.progress = null;
-        local.state.downloaded[local.state.loadingKey] = true;
-        local.state.loadedKey = local.state.loadingKey;
+        local.state.loadedKey = key;
+        local.state.crashed = null;
         settleLoad(null);
         changed();
       } else if (data.type === "text") {
@@ -157,8 +270,11 @@
           pending.onText(data.text);
         }
       } else if (data.type === "done") {
+        markActive(key, "");
         finishGenerate(null);
       } else if (data.type === "error") {
+        markActive(key, "");
+
         if (local.state.status === "loading") {
           local.state.status = "error";
           local.state.error = friendlyError(data.message);
@@ -174,6 +290,7 @@
     worker.addEventListener("error", function (event) {
       var message = "The in-browser model stopped unexpectedly" + (event.message ? " (" + event.message + ")" : "") + ".";
 
+      markActive("", "");
       worker = null;
       local.state.status = "error";
       local.state.error = message;
@@ -191,16 +308,15 @@
     var text = String(message || "Unknown error");
 
     if (/memory|allocat|OOM|device.*lost|Device was lost/i.test(text)) {
-      return "This device ran out of memory for the model. Close other tabs and apps and try again" +
-        (local.modelKey() === "e4b" ? ", or switch to Gemma 4 E2B." : ".") + " (" + text + ")";
+      return "This device ran out of memory for the model. Close other tabs and apps and try again, or choose a smaller model. (" + text + ")";
     }
 
     if (/quota|QuotaExceeded/i.test(text)) {
       return "There isn't enough free storage on this device to save the model. (" + text + ")";
     }
 
-    if (/fetch|network|Failed to load/i.test(text)) {
-      return "Couldn't download the model. Check your connection and try again. (" + text + ")";
+    if (/fetch|network|Failed to load|HTTP/i.test(text)) {
+      return "Couldn't download the model. Check your connection and try again; finished files are kept. (" + text + ")";
     }
 
     return text;
@@ -218,7 +334,8 @@
     });
   }
 
-  // Downloads (first time) or loads from the cache, then keeps the model in GPU memory.
+  // Downloads (first time, resuming from the last finished file) or loads from the cache,
+  // then keeps the model in GPU memory.
   local.load = function () {
     var key = local.modelKey();
 
@@ -232,24 +349,35 @@
       }
 
       return new Promise(function (resolve, reject) {
+        var model = local.models[key];
+
         loadWaiters.push({ resolve: resolve, reject: reject });
 
         if (local.state.status === "loading" && local.state.loadingKey === key) {
           return;
         }
 
-        // Ask the browser not to clear a multi-gigabyte download to make room.
+        // Ask the browser not to clear a large download to make room.
         if (navigator.storage && navigator.storage.persist) {
           navigator.storage.persist().catch(function () {});
         }
 
         local.state.status = "loading";
+        local.state.phase = "download";
         local.state.loadingKey = key;
         local.state.error = "";
         local.state.progress = null;
+        local.state.crashed = null;
+        markActive(key, "download");
         changed();
 
-        ensureWorker().postMessage({ type: "load", modelId: local.models[key].id, dtype: local.dtype() });
+        ensureWorker().postMessage({
+          type: "load",
+          modelId: model.id,
+          dtype: local.dtype(key),
+          kind: model.kind,
+          sessions: model.sessions
+        });
       });
     });
   };
@@ -267,8 +395,8 @@
     }
   }
 
-  // Streams a reply. onText receives each new piece of raw text, including Gemma's markers.
-  // Returns { promise, abort }.
+  // Streams a reply. onText receives each new piece of raw text, including the model's
+  // control tokens. Returns { promise, abort }.
   local.generate = function (messages, options) {
     var config = options || {};
     var aborted = false;
@@ -280,6 +408,7 @@
 
       return new Promise(function (resolve, reject) {
         pending = { resolve: resolve, reject: reject, onText: config.onText || function () {} };
+        markActive(local.state.loadedKey, "answer");
         worker.postMessage({
           type: "generate",
           messages: messages,
@@ -301,22 +430,34 @@
     };
   };
 
-  // Splits Gemma's raw output into reasoning and answer, and drops its control tokens.
+  // Splits raw output into reasoning and answer and drops control tokens. Gemma 4 marks
+  // reasoning with <|channel>…<channel|>; Qwen3 uses <think>…</think>.
   local.parse = function (raw) {
     var text = String(raw || "");
     var thinking = "";
-    var start = text.indexOf("<|channel>");
+    var markers = [["<|channel>", "<channel|>"], ["<think>", "</think>"]];
 
-    if (start !== -1) {
-      var end = text.indexOf("<channel|>", start);
-      var thought = end === -1 ? text.slice(start + 10) : text.slice(start + 10, end);
+    markers.forEach(function (pair) {
+      var start = text.indexOf(pair[0]);
 
-      thinking = thought.replace(/^thought\s*/, "");
-      text = text.slice(0, start) + (end === -1 ? "" : text.slice(end + 10));
-    }
+      if (start === -1) {
+        return;
+      }
+
+      var end = text.indexOf(pair[1], start);
+      var thought = end === -1 ?
+        text.slice(start + pair[0].length) :
+        text.slice(start + pair[0].length, end);
+
+      thinking += thought.replace(/^thought\s*/, "");
+      text = text.slice(0, start) + (end === -1 ? "" : text.slice(end + pair[1].length));
+    });
 
     function clean(value) {
-      return value.replace(/<\|?(turn|think|eos|bos|pad|end_of_turn|start_of_turn)\|?>/g, "").trim();
+      return value
+        .replace(/<\|?(turn|think|eos|bos|pad|end_of_turn|start_of_turn)\|?>/g, "")
+        .replace(/<\|(im_end|im_start|endoftext)\|>/g, "")
+        .trim();
     }
 
     return { thinking: clean(thinking), content: clean(text) };
@@ -329,12 +470,18 @@
     if (worker && (local.state.loadedKey === key || local.state.loadingKey === key)) {
       worker.terminate();
       worker = null;
+      markActive("", "");
       local.state.status = "idle";
+      local.state.phase = "";
       local.state.loadedKey = "";
       local.state.progress = null;
       settleLoad(new Error("Removed."));
       finishGenerate(new Error("Removed."));
     }
+
+    local.models[key].dtypes.forEach(function (dtype) {
+      storage("remove", DONE_PREFIX + local.models[key].id + "|" + dtype);
+    });
 
     if (!window.caches) {
       return Promise.resolve();
