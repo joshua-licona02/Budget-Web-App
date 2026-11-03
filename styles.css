@@ -1451,3 +1451,46 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{
 .advisor-progress>span{background:var(--blue);transition:width .3s}.advisor-crash{display:grid;gap:6px;justify-items:start;width:100%;padding:10px 12px;border:1px solid var(--warn-border);border-radius:10px;background:var(--tint-warn);color:var(--warn-text)}
 .advisor-crash p{margin:0;color:var(--text-soft);font-size:.84rem}
 .advisor-crash .button{min-height:30px;padding:4px 10px}
+/* Visuals taller or wider than their box scroll inside it instead of being cut off. The
+   ".visual-card > div" rule above hides overflow, so this needs the same specificity. */
+.visual-card>.visual-chart-area{overflow-x:auto;overscroll-behavior-x:contain}
+.visual-card>.visual-chart-area.visual-chart-fit{overflow-y:auto;overscroll-behavior:contain}
+/* Keep every field inside its column. iPhone Safari gives date and month inputs a fixed
+   minimum width that ignores the layout, so they push past their column and overlap the
+   field beside them; resetting their appearance lets them shrink like other inputs. */
+.form-grid>*,.form-field,.form-section{min-width:0}
+.form-field input,.form-field select,.form-field textarea{width:100%;min-width:0;max-width:100%}
+input[type="date"],input[type="month"]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;min-height:38px;line-height:1.2}
+input[type="date"]::-webkit-date-and-time-value,input[type="month"]::-webkit-date-and-time-value{min-height:1.2em;text-align:left}
+.month-control{min-width:0}
+.month-control input{width:100%}
+@media(max-width:720px){
+  input[type="date"],input[type="month"]{min-height:44px}
+  /* Pairs of fields get their own row on narrow phones rather than squeezing side by side. */
+  .form-section .form-grid{grid-template-columns:1fr}
+}
+@media(max-width:400px){
+  .transaction-filter-panel .transaction-filter-grid{grid-template-columns:1fr}
+}
+/* Splitting a purchase across categories */
+.split-panel{display:grid;gap:8px}
+.split-toggle{justify-self:start;min-height:34px;padding:4px 10px;color:var(--info-text)}
+.split-body{display:grid;gap:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.split-intro{margin:0;font-size:.82rem}
+.split-rows{display:grid;gap:8px}
+.split-row{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;align-items:center}
+.split-row .money-field input{width:100%;min-height:40px;padding:8px 8px 8px 22px;border:1px solid var(--border);border-radius:8px;color:var(--text);background:var(--surface2)}
+.split-category{min-width:0}
+.split-category .search-select-input{width:100%;min-height:40px;padding:8px;border:1px solid var(--border);border-radius:8px;color:var(--text);background:var(--surface2)}
+.split-remove{min-height:36px;padding:4px 8px}
+.split-body>.button{justify-self:start;min-height:34px;padding:4px 10px}
+.split-summary{margin:0;color:var(--text-soft);font-size:.84rem;font-weight:700}
+.split-note{display:block;margin-top:2px;color:var(--muted);font-size:.74rem}
+.savings-suggestion{margin:-6px 0 0}
+@media(max-width:720px){
+  .split-row{grid-template-columns:minmax(0,1fr) 110px;grid-template-areas:"category category" "amount remove"}
+  .split-row .split-category{grid-area:category}
+  .split-row .money-field{grid-area:amount}
+  .split-row .split-remove{grid-area:remove;justify-self:end}
+  .split-row .money-field input,.split-category .search-select-input{min-height:44px;font-size:16px}
+}

@@ -177,13 +177,21 @@
       return item.id === transactionId;
     })[0];
 
+    var parts = APP.state.transactions.filter(function (item) {
+      return item.splitOf === transactionId;
+    }).length;
+
     if (!transaction ||
-        !window.confirm("Delete this transaction?")) {
+        !window.confirm(transaction.splitOf ?
+          "Delete just this split part (" + APP.utils.currency(transaction.amount) + ")? The rest of the purchase stays." :
+          parts ? "Delete this purchase and its " + parts + (parts === 1 ? " split part?" : " split parts?") :
+            "Delete this transaction?")) {
       return;
     }
 
     APP.state.transactions = APP.state.transactions.filter(function (item) {
-      return item.id !== transactionId && item.roundUpFor !== transactionId;
+      return item.id !== transactionId && item.roundUpFor !== transactionId &&
+        item.splitOf !== transactionId;
     });
 
     APP.store.log(
@@ -202,7 +210,15 @@
     }
 
     if (button.dataset.action === "edit-transaction") {
-      APP.pages.transactions.openModal(button.dataset.id);
+      // A split part is edited as part of its whole purchase.
+      var picked = APP.state.transactions.filter(function (item) {
+        return item.id === button.dataset.id;
+      })[0];
+      var purchase = picked && picked.splitOf && APP.state.transactions.some(function (item) {
+        return item.id === picked.splitOf;
+      }) ? picked.splitOf : button.dataset.id;
+
+      APP.pages.transactions.openModal(purchase);
     }
 
     if (button.dataset.action === "delete-transaction") {
@@ -628,6 +644,210 @@
 
     amount.input.addEventListener("input", updateAllocationSummary);
 
+    // ---- Savings: suggest the amount still needed toward the fund's goal this month
+
+    var savingsHint = APP.dom.el("p", "field-hint savings-suggestion full");
+    var suggestedAmount = "";
+
+    savingsHint.hidden = true;
+
+    function suggestSavings() {
+      var selected = APP.model.categories().byId[category.input.value];
+      var month = (date.input.value || "").slice(0, 7) || APP.state.settings.selectedMonth;
+
+      savingsHint.hidden = true;
+
+      if (type.input.value !== "savings" || !selected || !selected.isSavingsFund) {
+        return;
+      }
+
+      var fund = APP.analytics.savingsFunds(month).filter(function (item) {
+        return item.category.id === selected.id;
+      })[0];
+
+      if (!fund) {
+        return;
+      }
+
+      // This entry shouldn't count toward what's already been saved when editing it.
+      var saved = Math.max(0, fund.deposits - (existing && existing.categoryId === selected.id ?
+        APP.utils.money(existing.amount) : 0));
+      var plan = fund.targetPlan && fund.targetPlan.months > 0 ? fund.targetPlan.perMonth : 0;
+      var suggestion = 0;
+      var reason = "";
+
+      if (fund.monthlyGoal > 0) {
+        suggestion = fund.monthlyGoal - saved;
+        reason = suggestion > 0 ?
+          "Suggested: " + APP.utils.currency(suggestion) + " left of this month's " +
+            APP.utils.currency(fund.monthlyGoal) + " goal" +
+            (saved > 0 ? " (" + APP.utils.currency(saved) + " already saved)." : ".") :
+          "This month's " + APP.utils.currency(fund.monthlyGoal) + " goal for " + selected.name + " is already met.";
+      } else if (plan > 0) {
+        suggestion = plan - saved;
+        reason = suggestion > 0 ?
+          "Suggested: " + APP.utils.currency(suggestion) + " this month to reach " +
+            APP.utils.currency(fund.eventualGoal) + " by " + APP.controller.monthName(fund.targetPlan.targetMonth) + "." :
+          "You've already saved this month's " + APP.utils.currency(plan) + " toward the target date.";
+      } else {
+        reason = "Set a monthly goal or target date for " + selected.name + " to get a suggested amount.";
+      }
+
+      suggestion = Math.round(Math.max(0, suggestion) * 100) / 100;
+      savingsHint.textContent = reason;
+      savingsHint.hidden = false;
+
+      // Fill the amount only if it's empty or still holds the last suggestion, never over
+      // an amount the user typed.
+      var current = amount.input.value.trim();
+
+      if (suggestion > 0 && (!current || current === suggestedAmount || APP.utils.money(current) === 0)) {
+        amount.input.value = APP.ui.formatMoneyText(suggestion);
+        suggestedAmount = amount.input.value;
+        amount.input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+
+    category.input.addEventListener("change", suggestSavings);
+    type.input.addEventListener("change", suggestSavings);
+    date.input.addEventListener("change", suggestSavings);
+
+    // ---- Split one purchase across several spending categories (e.g. a Target run that
+    // was partly house essentials). Each split is saved as its own transaction linked to
+    // this one with splitOf; whatever isn't split out stays in the chosen category.
+
+    var existingSplits = existing ? APP.state.transactions.filter(function (item) {
+      return item.splitOf === existing.id;
+    }) : [];
+
+    var splitPanel = APP.dom.el("div", "split-panel full");
+    var splitToggle = APP.ui.button("Split into categories", "button-quiet split-toggle");
+    var splitBody = APP.dom.el("div", "split-body");
+    var splitRowsRoot = APP.dom.el("div", "split-rows");
+    var splitSummary = APP.dom.el("p", "split-summary");
+    var addSplit = APP.ui.button("+ Add a category", "button-quiet");
+    var splitRows = [];
+
+    splitBody.hidden = true;
+    splitBody.appendChild(APP.dom.el("p", "muted split-intro",
+      "Move part of this purchase to other categories. Whatever you don't move stays in the category above."));
+    splitBody.appendChild(splitRowsRoot);
+    splitBody.appendChild(addSplit);
+    splitBody.appendChild(splitSummary);
+    splitPanel.appendChild(splitToggle);
+    splitPanel.appendChild(splitBody);
+
+    function splittable(item) {
+      return item && !item.archived && !item.isSavingsFund && !item.isDebtCategory;
+    }
+
+    function splitTotal() {
+      return splitRows.reduce(function (total, row) {
+        return total + APP.utils.money(row.amount.value);
+      }, 0);
+    }
+
+    function updateSplitSummary() {
+      var selected = APP.model.categories().byId[category.input.value];
+      var remainder = Math.round((APP.utils.money(amount.input.value) - splitTotal()) * 100) / 100;
+
+      splitSummary.className = "split-summary " + (remainder < 0 ? "danger" : "");
+      splitSummary.textContent = remainder < 0 ?
+        "The splits add up to " + APP.utils.currency(-remainder) + " more than the total." :
+        APP.utils.currency(remainder) + " stays in " + (selected ? selected.name : "the category above") + ".";
+    }
+
+    function addSplitRow(categoryId, value) {
+      var row = APP.dom.el("div", "split-row");
+      var select = APP.dom.el("select");
+      var input = APP.dom.el("input");
+      var remove = APP.ui.button("Remove", "button-quiet split-remove");
+
+      select.setAttribute("aria-label", "Category");
+      select.appendChild(APP.dom.el("option", "", "Choose a category"));
+      select.options[0].value = "";
+
+      APP.state.categories.filter(splittable).sort(function (a, b) {
+        return a.name.localeCompare(b.name);
+      }).forEach(function (item) {
+        var option = APP.dom.el("option", "", item.name);
+        option.value = item.id;
+        select.appendChild(option);
+      });
+
+      select.value = categoryId || "";
+      input.value = value === undefined || value === null ? "" : value;
+      input.placeholder = "0.00";
+      input.setAttribute("aria-label", "Amount");
+      input.addEventListener("input", updateSplitSummary);
+
+      var entry = { root: row, category: select, amount: input };
+
+      remove.addEventListener("click", function () {
+        splitRows = splitRows.filter(function (item) { return item !== entry; });
+        row.remove();
+        updateSplitSummary();
+
+        if (!splitRows.length) {
+          splitBody.hidden = true;
+          splitToggle.hidden = false;
+        }
+      });
+
+      var categoryCell = APP.dom.el("div", "split-category");
+      categoryCell.appendChild(select);
+      row.appendChild(categoryCell);
+      row.appendChild(APP.ui.moneyInput(input));
+      row.appendChild(remove);
+      splitRowsRoot.appendChild(row);
+      splitRows.push(entry);
+
+      APP.ui.tagCategoryOptions(select);
+      APP.ui.searchSelect(select, { placeholder: "Choose a category" });
+      updateSplitSummary();
+      return entry;
+    }
+
+    function updateSplitVisibility() {
+      var selected = APP.model.categories().byId[category.input.value];
+      var eligible = type.input.value === "expense" && splittable(selected);
+
+      splitPanel.style.display = eligible ? "" : "none";
+
+      if (eligible) {
+        splitToggle.textContent = "Split this " + selected.name + " purchase into other categories";
+        updateSplitSummary();
+      }
+    }
+
+    splitToggle.addEventListener("click", function () {
+      splitBody.hidden = false;
+      splitToggle.hidden = true;
+
+      if (!splitRows.length) {
+        addSplitRow().category.parentNode.querySelector("input").focus();
+      }
+    });
+
+    addSplit.addEventListener("click", function () {
+      addSplitRow();
+    });
+
+    amount.input.addEventListener("input", updateSplitSummary);
+    category.input.addEventListener("change", updateSplitVisibility);
+    type.input.addEventListener("change", updateSplitVisibility);
+
+    // Editing a split purchase shows its full total and the existing splits.
+    if (existingSplits.length) {
+      amount.input.value = APP.ui.formatMoneyText(APP.utils.money(existing.amount) +
+        existingSplits.reduce(function (total, item) { return total + APP.utils.money(item.amount); }, 0));
+      existingSplits.forEach(function (item) {
+        addSplitRow(item.categoryId, APP.ui.formatMoneyText(item.amount));
+      });
+      splitBody.hidden = false;
+      splitToggle.hidden = true;
+    }
+
     updateCategoryField();
 
     // Type as a row of buttons (the select stays, hidden, for the existing logic).
@@ -652,6 +872,12 @@
       notes
     ].forEach(function (field) {
       form.appendChild(field.root);
+
+      if (field === amount) {
+        form.appendChild(savingsHint);
+      } else if (field === refundCategory) {
+        form.appendChild(splitPanel);
+      }
     });
 
     form.appendChild(roundUp);
@@ -662,6 +888,8 @@
     APP.ui.searchSelect(category.input, { placeholder: "Search categories" });
     APP.ui.searchSelect(refundCategory.input, { placeholder: "Search categories" });
     updateCategoryField();
+    updateSplitVisibility();
+    suggestSavings();
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -710,6 +938,55 @@
         APP.dom.toast(errors.join(" "), "danger");
         return;
       }
+
+      // Splits: rows left completely empty are ignored; half-filled rows are an error.
+      var splitting = splitPanel.style.display !== "none" && !splitBody.hidden;
+      var portions = [];
+
+      if (splitting) {
+        var splitError = "";
+
+        splitRows.forEach(function (row) {
+          var value = APP.utils.money(row.amount.value);
+
+          if (!row.category.value && !value) {
+            return;
+          }
+
+          if (!row.category.value || value <= 0) {
+            splitError = "Each split needs a category and an amount.";
+            return;
+          }
+
+          portions.push({ categoryId: row.category.value, amount: value });
+        });
+
+        var remainder = Math.round((candidate.amount - portions.reduce(function (total, item) {
+          return total + item.amount;
+        }, 0)) * 100) / 100;
+
+        if (splitError || remainder < 0) {
+          APP.dom.toast(splitError || "The splits add up to more than the total amount.", "danger");
+          return;
+        }
+
+        // What isn't split out stays in the chosen category. If everything was split out,
+        // the first split takes this transaction's place (an amount can't be zero).
+        if (remainder > 0) {
+          portions.unshift({ categoryId: candidate.categoryId, amount: remainder });
+        }
+
+        if (portions.length > 1) {
+          candidate.splitTotal = candidate.amount;
+        }
+
+        if (portions.length) {
+          candidate.categoryId = portions[0].categoryId;
+          candidate.amount = portions[0].amount;
+        }
+      }
+
+      APP.pages.transactions.applySplits(candidate, splitting ? portions.slice(1) : []);
 
       APP.pages.transactions.applyRoundUp(
         candidate,
@@ -826,6 +1103,43 @@
   APP.pages.transactions.roundUpFundName = function () {
     var fund = APP.pages.transactions.roundUpFund(false);
     return fund ? fund.name : "Round-Up Savings";
+  };
+
+  // Replaces a purchase's split-out parts with portions ([{ categoryId, amount }]). Each part
+  // is its own expense linked by splitOf, so every report counts it in its own category.
+  // Existing part ids are reused so synced devices update rather than delete and re-add.
+  APP.pages.transactions.applySplits = function (purchase, portions) {
+    var previous = APP.state.transactions.filter(function (item) {
+      return item.splitOf === purchase.id;
+    });
+
+    APP.state.transactions = APP.state.transactions.filter(function (item) {
+      return item.splitOf !== purchase.id;
+    });
+
+    if (!portions.length) {
+      delete purchase.splitTotal;
+      return;
+    }
+
+    portions.forEach(function (portion, index) {
+      var old = previous[index];
+
+      APP.state.transactions.push({
+        id: old ? old.id : APP.utils.id("txn"),
+        date: purchase.date,
+        month: purchase.month,
+        description: purchase.description,
+        categoryId: portion.categoryId,
+        type: "expense",
+        amount: portion.amount,
+        notes: purchase.notes,
+        debtAllocations: [],
+        splitOf: purchase.id,
+        createdAt: old ? old.createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    });
   };
 
   // Creates, updates or removes the savings transaction that holds an expense's
