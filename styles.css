@@ -1498,3 +1498,37 @@ input[type="date"]::-webkit-date-and-time-value,input[type="month"]::-webkit-dat
 /* Anything marked "full" spans the whole form, not just fields: the type buttons, the
    savings hint and the split panel otherwise land in one column of a two-column form. */
 .form-grid>.full{grid-column:1/-1}
+/* ---- Guided tour */
+.tour-layer{position:fixed;inset:0;z-index:70}
+.tour-layer.tour-centered{display:grid;place-items:center;padding:16px;background:rgba(2,7,14,.72)}
+.tour-spot{position:fixed;border-radius:12px;box-shadow:0 0 0 9999px rgba(2,7,14,.72);outline:2px solid var(--blue);outline-offset:0;pointer-events:none;transition:top .25s ease,left .25s ease,width .25s ease,height .25s ease}
+.tour-card{position:fixed;z-index:1;display:grid;gap:8px;width:min(380px,calc(100vw - 24px));padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 18px 48px var(--shadow)}
+.tour-centered .tour-card{position:static}
+.tour-card h3{margin:0;font-size:1.05rem}
+.tour-count{margin:0;color:var(--blue);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.tour-body{margin:0;color:var(--text-soft);font-size:.9rem;line-height:1.5}
+.tour-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:4px}
+.tour-actions .tour-skip{margin-right:auto;padding-left:0}
+:root[data-theme="light"] .tour-spot{box-shadow:0 0 0 9999px rgba(15,23,42,.55)}
+:root[data-theme="light"] .tour-layer.tour-centered{background:rgba(15,23,42,.55)}
+body.tour-open{overflow:hidden}
+@media(max-width:720px){
+  /* On phones the card sits at the bottom and the highlighted part is scrolled near the top. */
+  .tour-layer:not(.tour-centered) .tour-card{top:auto!important;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));left:12px!important;width:auto}
+}
+
+/* ---- Help button and panel */
+.help-button{display:inline-grid;place-items:center;width:38px;padding:0;border:1px solid var(--border);border-radius:99px;background:var(--surface2);color:var(--text);font-size:1rem}
+.help-panel{display:grid;gap:10px}
+.help-intro{display:grid;gap:10px;justify-items:start;padding:12px 14px;border:1px solid var(--notice-border);border-radius:12px;background:var(--tint-notice)}
+.help-intro p{margin:0;color:var(--text-soft);font-size:.88rem}
+.help-topic{border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.help-topic summary{padding:12px 14px;cursor:pointer;font-weight:700}
+.help-topic[open] summary{border-bottom:1px solid var(--border)}
+.help-topic ol,.help-topic ul{display:grid;gap:8px;margin:0;padding:12px 14px 14px 32px;color:var(--text-soft);font-size:.88rem;line-height:1.5}
+@media(max-width:720px){
+  /* Pinned to the header's top-right corner instead of wrapping onto its own row. */
+  .topbar{position:relative}
+  .topbar>div:not(.topbar-actions){padding-right:52px}
+  .help-button{position:absolute;top:0;right:0;min-height:42px;width:42px}
+}
