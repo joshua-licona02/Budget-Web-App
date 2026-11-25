@@ -134,7 +134,14 @@
       remove.dataset.id = transaction.id;
 
       row.appendChild(APP.dom.el("td", "", transaction.date));
-      row.appendChild(APP.dom.el("td", "", transaction.description));
+
+      var descriptionCell = APP.dom.el("td", "", transaction.description);
+
+      if (APP.tables.splitNote(transaction)) {
+        descriptionCell.appendChild(APP.dom.el("span", "split-note", APP.tables.splitNote(transaction)));
+      }
+
+      row.appendChild(descriptionCell);
 
       row.appendChild(APP.dom.el(
         "td",
@@ -253,6 +260,10 @@
         details.push(type);
       }
 
+      if (APP.tables.splitNote(transaction)) {
+        details.push(APP.tables.splitNote(transaction));
+      }
+
       if (transaction.notes) {
         details.push(transaction.notes);
       }
@@ -278,6 +289,19 @@
     });
 
     return list;
+  };
+
+  // Labels the parts of a purchase split across categories.
+  APP.tables.splitNote = function (transaction) {
+    if (transaction.splitOf) {
+      return "Split part";
+    }
+
+    if (transaction.splitTotal) {
+      return "Split · " + APP.utils.currency(transaction.splitTotal) + " total";
+    }
+
+    return "";
   };
 
   // "Today", "Yesterday", or e.g. "Mon, Oct 27" (with the year when it isn't this year).

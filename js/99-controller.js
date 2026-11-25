@@ -11,7 +11,7 @@
     savings: ["Savings & Goals", "Monthly contributions, eventual savings goals, and target progress"],
     debts: ["Debt Tracking", "Confirmed balances, projected balances, and allocated payment history"],
     accounts: ["Accounts", "Check your budget against your real balances"],
-    advisor: ["Ollama Advisor", "Optional local financial-planning analysis"],
+    advisor: ["Advisor", "Private, on-device financial-planning analysis"],
     settings: ["Settings", "Local data and optional Ollama connection"]
   };
 
@@ -4022,7 +4022,19 @@
       if (/^\d{4}-\d{2}$/.test(APP.dom.refs.month.value)) {
         APP.state.settings.selectedMonth =
           APP.dom.refs.month.value;
+        APP.controller.monthPicked = true;
 
+        APP.controller.commit();
+      }
+    });
+
+    // Left open into a new month, the app follows the calendar unless a month was picked.
+    document.addEventListener("visibilitychange", function () {
+      var current = APP.utils.month(new Date());
+
+      if (document.visibilityState === "visible" && !APP.controller.monthPicked &&
+          APP.state.settings.selectedMonth !== current) {
+        APP.state.settings.selectedMonth = current;
         APP.controller.commit();
       }
     });
@@ -4135,6 +4147,12 @@
     APP.dom.init();
     APP.store.load();
     APP.controller.normalizeState();
+
+    // Every visit starts on the current month; a month picked by hand lasts until the
+    // page is reloaded.
+    APP.state.settings.selectedMonth = APP.utils.month(new Date());
+    APP.controller.monthPicked = false;
+
     APP.controller.applyTheme();
 
     // "Match this device" follows the system setting as it changes.

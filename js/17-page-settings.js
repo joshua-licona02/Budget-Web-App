@@ -448,6 +448,7 @@
     preferences.appendChild(roundUpDefault);
     preferences.appendChild(roundUpFund.root);
     page.appendChild(preferences);
+    page.appendChild(APP.help.settingsSection());
 
     var ollamaSection =
       APP.pages.settings.section(

@@ -30,6 +30,13 @@
 
   APP.pages.advisor.refs = {};
 
+  // "ollama" (the Ollama app on this computer) or "browser" (Gemma 4 on this device's GPU).
+  // Stored with the Ollama settings, which stay on each device rather than syncing.
+  APP.pages.advisor.engine = function () {
+    var ollama = APP.state.settings.ollama || {};
+    return ollama.engine === "browser" ? "browser" : "ollama";
+  };
+
   APP.pages.advisor.endpoint = function () {
     var ollama = APP.state.settings.ollama || {};
     return (APP.utils.text(ollama.endpoint) || APP.pages.advisor.defaultEndpoint)
@@ -149,6 +156,98 @@
         estimatedNetPaycheck: round(salary.netPaycheck)
       }
     };
+  };
+
+  // A shorter summary for the small phone models. Reading the prompt takes memory that grows
+  // with the square of its length, and the full summary (~2,300 tokens) needed over 2 GB of
+  // GPU memory on Qwen3 0.6B, more than an iPhone allows a page.
+  APP.pages.advisor.compactSummary = function () {
+    var round = APP.pages.advisor.round;
+    var month = APP.state.settings.selectedMonth;
+    var current = APP.pages.advisor.monthTotals(month);
+    var history = [];
+
+    for (var offset = 3; offset >= 1; offset -= 1) {
+      var past = APP.pages.advisor.monthTotals(APP.analytics.addMonths(month, -offset));
+      history.push({
+        month: past.month,
+        income: past.income,
+        spending: past.operatingSpendingAfterRefunds,
+        saved: past.savingsContributions,
+        net: past.netCashFlow
+      });
+    }
+
+    // Small models compare numbers unreliably, so the app works out what's over and under
+    // budget and states it outright.
+    var categories = APP.pages.advisor.categoryBreakdown(month).filter(function (row) {
+      return row.budgeted || row.spent;
+    });
+
+    var overBudget = categories.filter(function (row) {
+      return row.spent - row.budgeted >= 0.01;
+    }).sort(function (a, b) {
+      return (b.spent - b.budgeted) - (a.spent - a.budgeted);
+    }).map(function (row) {
+      return { name: row.category, overBy: round(row.spent - row.budgeted) };
+    });
+
+    return {
+      today: APP.utils.isoDate(new Date()),
+      month: month,
+      overBudget: overBudget.length ? overBudget : "No categories are over budget.",
+      thisMonth: {
+        income: current.income,
+        expectedIncome: round(APP.model.budget(month, false).expectedIncome),
+        spending: current.operatingSpendingAfterRefunds,
+        saved: current.savingsContributions,
+        debtPayments: current.debtPayments,
+        net: current.netCashFlow
+      },
+      previousMonths: history,
+      categories: categories.map(function (row) {
+        return { name: row.category, budget: row.budgeted, spent: row.spent, left: round(row.budgeted - row.spent) };
+      }),
+      savingsFunds: APP.analytics.savingsFunds(month).filter(function (fund) {
+        return fund.balance || fund.monthlyGoal || fund.eventualGoal;
+      }).map(function (fund) {
+        var item = { name: fund.category.name, balance: round(fund.balance) };
+
+        if (fund.monthlyGoal) {
+          item.monthlyGoal = round(fund.monthlyGoal);
+        }
+
+        if (fund.eventualGoal) {
+          item.goal = round(fund.eventualGoal);
+        }
+
+        return item;
+      }),
+      debts: APP.analytics.debts().filter(function (item) {
+        return !item.debt.archived;
+      }).map(function (item) {
+        return {
+          name: item.debt.name,
+          balance: round(item.projectedBalance),
+          apr: item.debt.apr,
+          minimum: round(item.debt.minimumMonthlyPayment),
+          paidThisMonth: round(item.paymentThisMonth)
+        };
+      }),
+      netMonthlySalary: round(APP.analytics.salary().netMonthly)
+    };
+  };
+
+  APP.pages.advisor.compactSystemPrompt = function () {
+    return [
+      "You are a budgeting assistant in the user's budget app. Their data is below as JSON (amounts in " +
+        (APP.state.settings.currency || APP.config.currency) + "); every figure is correct.",
+      "Use only this data and never invent numbers. \"overBudget\" lists every category over budget, largest first; \"left\" is budget minus spent (negative means over).",
+      "Be brief and practical, and name categories and amounts.",
+      "This is planning help, not professional financial advice.",
+      "",
+      JSON.stringify(APP.pages.advisor.compactSummary())
+    ].join("\n");
   };
 
   APP.pages.advisor.systemPrompt = function () {
@@ -397,8 +496,18 @@
       return;
     }
 
-    if (!ollama.model) {
+    var engine = APP.pages.advisor.engine();
+    var local = APP.localLLM;
+
+    if (engine === "ollama" && !ollama.model) {
       APP.dom.toast("Choose a model first.", "danger");
+      return;
+    }
+
+    // Never start a multi-gigabyte download from a question; that's the Download button's job.
+    if (engine === "browser" && local.state.status !== "ready" &&
+        !local.state.downloaded[local.modelKey()]) {
+      APP.dom.toast("Download the model first (button above the chat).", "danger");
       return;
     }
 
@@ -412,10 +521,12 @@
       role: "assistant",
       content: "",
       thinking: "",
-      model: ollama.model,
+      model: engine === "browser" ? local.models[local.modelKey()].name + " (this device)" : ollama.model,
       month: APP.state.settings.selectedMonth,
       pending: true,
-      status: "Sending your data summary to the model..."
+      status: engine === "browser" ?
+        (local.state.status === "ready" ? "Reading your data on this device..." : "Loading the model on this device...") :
+        "Sending your data summary to the model..."
     };
 
     chat.messages.push({ role: "user", content: question });
@@ -463,6 +574,50 @@
       APP.pages.advisor.paint();
     }
 
+    // Phone models get the compact summary and only the last two exchanges, to keep the
+    // prompt (and the memory needed to read it) small.
+    var small = engine === "browser" && local.models[local.modelKey()].phone;
+    var messages = [{
+      role: "system",
+      content: small ? APP.pages.advisor.compactSystemPrompt() : APP.pages.advisor.systemPrompt()
+    }]
+      .concat(small ? history.slice(-4) : history)
+      .concat([{ role: "user", content: question }]);
+
+    if (engine === "browser") {
+      var raw = "";
+      var stopped = false;
+      var job = local.generate(messages, {
+        think: chat.think,
+        // Memory grows with every word of the reply, so phone answers stay short.
+        maxNewTokens: small ? 500 : 1024,
+        onText: function (text) {
+          var parsed;
+
+          raw += text;
+          parsed = local.parse(raw);
+          reply.thinking = parsed.thinking;
+          reply.content = parsed.content;
+          reply.status = parsed.content || parsed.thinking ? "" : "Thinking...";
+          APP.pages.advisor.schedulePaint();
+        }
+      });
+
+      chat.abort = {
+        abort: function () {
+          stopped = true;
+          job.abort();
+        }
+      };
+
+      job.promise.then(function () {
+        finish(stopped ? "Stopped." : "");
+      }).catch(function (error) {
+        finish(stopped || error.name === "AbortError" ? "Stopped." : "Advisor error: " + error.message);
+      });
+      return;
+    }
+
     function handleLine(line) {
       if (!line.trim()) {
         return;
@@ -500,9 +655,7 @@
           num_ctx: Math.max(2048, APP.utils.number(ollama.contextLength) || 8192),
           temperature: 0.3
         },
-        messages: [{ role: "system", content: APP.pages.advisor.systemPrompt() }]
-          .concat(history)
-          .concat([{ role: "user", content: question }])
+        messages: messages
       })
     }).then(function (response) {
       if (!response.ok) {
@@ -598,18 +751,286 @@
     var ollama = APP.state.settings.ollama;
     var refs = APP.pages.advisor.refs = {};
 
+    var engine = APP.pages.advisor.engine();
+
     APP.dom.clear(root);
 
-    if (chat.models === null && !chat.modelsError && !chat.modelsLoading &&
+    if (engine === "ollama" && chat.models === null && !chat.modelsError && !chat.modelsLoading &&
         window.location.protocol !== "file:") {
       APP.pages.advisor.loadModels();
     }
 
     root.appendChild(APP.ui.panelHeader(
-      "Ollama financial advisor",
-      "Runs on your local Ollama models, so your data stays on this computer. Advisor output is informational planning support only, not professional financial, tax, investment, payroll, or legal advice."
+      "Financial advisor",
+      "Runs on a model on your own device, so your data stays private. Advisor output is informational planning support only, not professional financial, tax, investment, payroll, or legal advice."
     ));
 
+    root.appendChild(APP.pages.advisor.engineSwitch());
+
+    if (engine === "browser") {
+      root.appendChild(APP.pages.advisor.browserToolbar());
+    } else {
+      APP.pages.advisor.ollamaToolbar(root);
+    }
+
+    APP.pages.advisor.chatArea(root);
+  };
+
+  // Engine picker: a row of two buttons backed by a hidden select.
+  APP.pages.advisor.engineSwitch = function () {
+    var ollama = APP.state.settings.ollama;
+    var wrap = APP.dom.el("div", "advisor-engine");
+    var select = APP.dom.el("select");
+
+    [["ollama", "Ollama (this computer)"], ["browser", "In the browser (this device)"]].forEach(function (choice) {
+      var option = APP.dom.el("option", "", choice[1]);
+      option.value = choice[0];
+      select.appendChild(option);
+    });
+
+    select.value = APP.pages.advisor.engine();
+    select.hidden = true;
+    select.addEventListener("change", function () {
+      ollama.engine = select.value;
+      APP.store.log("info", "Advisor engine set to " + (select.value === "browser" ? "in-browser model" : "Ollama") + ".");
+      APP.store.save();
+      APP.pages.advisor.render();
+    });
+
+    wrap.appendChild(APP.dom.el("span", "advisor-engine-label", "Runs on"));
+    wrap.appendChild(APP.ui.segmented(select, [
+      { value: "ollama", label: "Ollama" },
+      { value: "browser", label: "This device" }
+    ]));
+    wrap.appendChild(select);
+    return wrap;
+  };
+
+  APP.pages.advisor.thinkToggle = function () {
+    var chat = APP.pages.advisor.chat;
+    var thinkLabel = APP.dom.el("label", "advisor-check");
+    var think = APP.dom.el("input");
+
+    think.type = "checkbox";
+    think.checked = chat.think;
+    think.addEventListener("change", function () {
+      chat.think = think.checked;
+    });
+    thinkLabel.appendChild(think);
+    thinkLabel.appendChild(document.createTextNode(" Let the model reason first (better for math, much slower)"));
+    return thinkLabel;
+  };
+
+  APP.pages.advisor.browserToolbar = function () {
+    var local = APP.localLLM;
+    var ollama = APP.state.settings.ollama;
+    var refs = APP.pages.advisor.refs;
+    var wrap = APP.dom.el("div", "advisor-local");
+    var toolbar = APP.dom.el("div", "advisor-toolbar");
+
+    var model = APP.ui.field("Model", "browserModel", "select", local.modelKey(), {
+      options: Object.keys(local.models).map(function (key) {
+        return { value: key, label: local.models[key].name + " · " + local.models[key].note };
+      })
+    });
+
+    model.input.addEventListener("change", function () {
+      ollama.browserModel = model.input.value;
+      APP.store.save();
+      local.checkDownloaded(model.input.value);
+      APP.pages.advisor.paintLocal();
+    });
+
+    toolbar.appendChild(model.root);
+    toolbar.appendChild(APP.pages.advisor.thinkToggle());
+    wrap.appendChild(toolbar);
+
+    refs.localStatus = APP.dom.el("div", "advisor-local-status");
+    wrap.appendChild(refs.localStatus);
+
+    // Check WebGPU first: it decides which file format, and so which files, to look for.
+    if (!local.state.support) {
+      local.checkSupport().then(function () {
+        local.checkDownloaded();
+      });
+    } else if (local.state.downloaded[local.modelKey()] === undefined) {
+      local.checkDownloaded();
+    }
+
+    if (!APP.pages.advisor.localListening) {
+      APP.pages.advisor.localListening = true;
+      local.onChange(APP.pages.advisor.paintLocal);
+    }
+
+    APP.pages.advisor.paintLocal();
+    return wrap;
+  };
+
+  // Redraws only the download / status box, so progress updates don't disturb the chat.
+  APP.pages.advisor.paintLocal = function () {
+    var local = APP.localLLM;
+    var box = APP.pages.advisor.refs.localStatus;
+
+    if (!box || !box.isConnected) {
+      return;
+    }
+
+    var key = local.modelKey();
+    var model = local.models[key];
+    var state = local.state;
+    var downloaded = state.downloaded[key];
+    var busyHere = state.status === "loading" && state.loadingKey === key;
+    var readyHere = state.status === "ready" && state.loadedKey === key;
+
+    APP.dom.clear(box);
+    box.className = "advisor-local-status";
+
+    function line(text, className) {
+      box.appendChild(APP.dom.el("p", className || "", text));
+    }
+
+    function removeButton() {
+      var remove = APP.ui.button("Remove from this device", "button-quiet");
+
+      remove.addEventListener("click", function () {
+        if (window.confirm("Remove " + model.name + " from this browser? You can download it again later.")) {
+          local.remove(key).then(function () {
+            APP.dom.toast(model.name + " was removed from this device.", "success");
+          });
+        }
+      });
+      return remove;
+    }
+
+    // The page closed last time while the model was busy: almost always memory.
+    if (state.crashed && !busyHere && !readyHere) {
+      var crashedModel = local.models[state.crashed.key];
+      var smaller = state.crashed.key === "qwen3" ? null :
+        (crashedModel.phone ? local.models.qwen3 : local.models.gemma3);
+      var notice = APP.dom.el("div", "advisor-crash");
+      var dismiss = APP.ui.button("Dismiss", "button-quiet");
+
+      notice.appendChild(APP.dom.el("strong", "", {
+        download: "The page closed during the last download of " + crashedModel.name + ".",
+        load: "The page closed while loading " + crashedModel.name + ".",
+        answer: "The page closed while " + crashedModel.name + " was answering."
+      }[state.crashed.phase] || "The page closed while " + crashedModel.name + " was busy."));
+
+      notice.appendChild(APP.dom.el("p", "", state.crashed.phase === "download" ?
+        "Finished files were kept, so downloading again picks up where it stopped. If it keeps closing, this device is short on memory" +
+          (smaller ? "; try " + smaller.name + "." : ".") :
+        "That usually means this device ran out of memory for it." +
+          (smaller ? " Try " + smaller.name + ", which needs less." : " Close other apps and tabs and try again.")));
+
+      dismiss.addEventListener("click", local.dismissCrash);
+      notice.appendChild(dismiss);
+      box.appendChild(notice);
+    }
+
+    if (!state.support) {
+      line("Checking this device…", "muted");
+      return;
+    }
+
+    if (!state.support.ok) {
+      box.classList.add("is-warning");
+      line(state.support.reason);
+      line("You can still use the Ollama engine on your computer.", "muted");
+      return;
+    }
+
+    if (busyHere) {
+      var progress = state.progress;
+      var bar = APP.dom.el("div", "progress advisor-progress");
+      var fill = APP.dom.el("span");
+      var loadingFromDisk = state.phase === "load";
+
+      fill.style.width = (progress ? Math.min(100, progress.progress) : 0) + "%";
+      bar.appendChild(fill);
+
+      line(loadingFromDisk ?
+        "Loading " + model.name + " into memory…" :
+        (downloaded ? "Checking " + model.name + "'s files…" : "Downloading " + model.name + "… keep this page open."),
+        "advisor-local-title");
+      box.appendChild(bar);
+      line(progress && progress.total ?
+        (loadingFromDisk ? "" : (progress.loaded / 1e9).toFixed(2) + " of " + (progress.total / 1e9).toFixed(2) + " GB · ") +
+          Math.floor(progress.progress) + "%" :
+        "Starting…", "muted");
+      return;
+    }
+
+    if (state.status === "error" && state.loadingKey === key) {
+      var retry = APP.ui.button("Try again", "button-secondary");
+
+      box.classList.add("is-error");
+      line(state.error);
+      retry.addEventListener("click", function () {
+        local.load().catch(function () {});
+      });
+      box.appendChild(retry);
+      return;
+    }
+
+    if (readyHere) {
+      box.classList.add("is-ready");
+      line("Ready · " + model.name + " is running on this device. Your data doesn't leave it.", "advisor-local-title");
+
+      if (state.notSaved === key) {
+        line("This browser couldn't save the model, so it will download again next time.", "muted");
+      } else {
+        box.appendChild(removeButton());
+      }
+      return;
+    }
+
+    if (downloaded === undefined) {
+      line("Checking for a downloaded model…", "muted");
+      return;
+    }
+
+    if (!model.phone && local.isPhone()) {
+      line(model.name + " needs more memory than a phone browser allows a single page. Choose Gemma 3 1B or Qwen3 0.6B on this device.", "warning-text");
+    }
+
+    if (downloaded) {
+      line(model.name + " is downloaded. It loads into memory when you send your first question.", "advisor-local-title");
+      box.appendChild(removeButton());
+      return;
+    }
+
+    var download = APP.ui.button("Download " + model.name + " (" + local.sizeLabel(key) + ")", "button-primary");
+
+    line("Runs entirely on this device, so your data never leaves it. It's a one-time download per browser; use Wi-Fi.", "advisor-local-title");
+
+    download.addEventListener("click", function () {
+      var check = navigator.storage && navigator.storage.estimate ?
+        navigator.storage.estimate() :
+        Promise.resolve(null);
+
+      check.then(function (estimate) {
+        var needed = local.sizeGB(key) * 1e9;
+        var free = estimate && estimate.quota ? estimate.quota - estimate.usage : Infinity;
+
+        if (free < needed && !window.confirm("This browser reports only about " + (free / 1e9).toFixed(1) +
+          " GB of space for this site, and the model needs " + local.sizeLabel(key) + ". Try anyway?")) {
+          return;
+        }
+
+        local.load().then(function () {
+          APP.dom.toast(model.name + " is ready on this device.", "success");
+        }).catch(function () {
+          // The status box shows the error.
+        });
+      });
+    });
+
+    box.appendChild(download);
+  };
+
+  APP.pages.advisor.ollamaToolbar = function (root) {
+    var chat = APP.pages.advisor.chat;
+    var ollama = APP.state.settings.ollama;
     var note = APP.pages.advisor.connectionNote();
 
     if (note) {
@@ -643,16 +1064,6 @@
       APP.store.save();
     });
 
-    var thinkLabel = APP.dom.el("label", "advisor-check");
-    var think = APP.dom.el("input");
-    think.type = "checkbox";
-    think.checked = chat.think;
-    think.addEventListener("change", function () {
-      chat.think = think.checked;
-    });
-    thinkLabel.appendChild(think);
-    thinkLabel.appendChild(document.createTextNode(" Let the model reason first (better for math, much slower)"));
-
     var refresh = APP.ui.button("Refresh models", "button-quiet");
     refresh.addEventListener("click", function () {
       chat.models = null;
@@ -663,8 +1074,14 @@
 
     toolbar.appendChild(model.root);
     toolbar.appendChild(refresh);
-    toolbar.appendChild(thinkLabel);
+    toolbar.appendChild(APP.pages.advisor.thinkToggle());
     root.appendChild(toolbar);
+  };
+
+  // The conversation, suggestions, question box and data preview, shared by both engines.
+  APP.pages.advisor.chatArea = function (root) {
+    var chat = APP.pages.advisor.chat;
+    var refs = APP.pages.advisor.refs;
 
     refs.log = APP.dom.el("div", "advisor-log");
     root.appendChild(refs.log);
