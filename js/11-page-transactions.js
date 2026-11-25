@@ -95,6 +95,12 @@
     var search = APP.utils.header(filters.search);
 
     var rows = APP.state.transactions.filter(function (transaction) {
+      // A round-up shows on its purchase ("+$0.80 rounded up"), not as its own row. It still
+      // counts toward savings everywhere else.
+      if (transaction.roundUpFor) {
+        return false;
+      }
+
       var category = categoryMap[transaction.categoryId];
       var kind = APP.model.classify(transaction);
       var searchable = APP.utils.header(
@@ -815,17 +821,18 @@
       splitPanel.style.display = eligible ? "" : "none";
 
       if (eligible) {
-        splitToggle.textContent = "Split this " + selected.name + " purchase into other categories";
         updateSplitSummary();
       }
     }
+
+    splitToggle.textContent = "Split across categories";
 
     splitToggle.addEventListener("click", function () {
       splitBody.hidden = false;
       splitToggle.hidden = true;
 
       if (!splitRows.length) {
-        addSplitRow().category.parentNode.querySelector("input").focus();
+        addSplitRow();
       }
     });
 

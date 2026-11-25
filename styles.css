@@ -1474,7 +1474,8 @@ input[type="date"]::-webkit-date-and-time-value,input[type="month"]::-webkit-dat
 }
 /* Splitting a purchase across categories */
 .split-panel{display:grid;gap:8px}
-.split-toggle{justify-self:start;min-height:34px;padding:4px 10px;color:var(--info-text)}
+.split-toggle{justify-self:start;min-height:0;margin-top:-6px;padding:2px 0;border:0;background:none;color:var(--info-text);font-size:.8rem;font-weight:600;white-space:nowrap}
+.split-toggle:hover{text-decoration:underline}
 .split-body{display:grid;gap:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
 .split-intro{margin:0;font-size:.82rem}
 .split-rows{display:grid;gap:8px}
@@ -1494,3 +1495,6 @@ input[type="date"]::-webkit-date-and-time-value,input[type="month"]::-webkit-dat
   .split-row .split-remove{grid-area:remove;justify-self:end}
   .split-row .money-field input,.split-category .search-select-input{min-height:44px;font-size:16px}
 }
+/* Anything marked "full" spans the whole form, not just fields: the type buttons, the
+   savings hint and the split panel otherwise land in one column of a two-column form. */
+.form-grid>.full{grid-column:1/-1}
