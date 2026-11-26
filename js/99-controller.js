@@ -4031,10 +4031,23 @@
     // Left open into a new month, the app follows the calendar unless a month was picked.
     document.addEventListener("visibilitychange", function () {
       var current = APP.utils.month(new Date());
+      var changed = false;
 
-      if (document.visibilityState === "visible" && !APP.controller.monthPicked &&
-          APP.state.settings.selectedMonth !== current) {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      if (!APP.controller.monthPicked && APP.state.settings.selectedMonth !== current) {
         APP.state.settings.selectedMonth = current;
+        changed = true;
+      }
+
+      // An app left open past a temporary category's end date archives it on return.
+      if (APP.pages.categories.autoArchive().length) {
+        changed = true;
+      }
+
+      if (changed) {
         APP.controller.commit();
       }
     });
@@ -4105,6 +4118,9 @@
 
       APP.state.settings.dashboardLayoutVersion = 3;
     }
+
+    // Temporary categories past their end date move to Archived.
+    APP.pages.categories.autoArchive();
   };
 
   APP.controller.resolvedTheme = function () {

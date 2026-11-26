@@ -164,6 +164,25 @@
     flags.appendChild(flag("Debt category", debt));
     flags.appendChild(flag("Temporary category", temporary));
 
+    // A temporary category can end on a date; the day after, it archives itself.
+    var endDate = APP.ui.field(
+      "Ends on (optional)",
+      "endDate",
+      "date",
+      category.endDate || "",
+      { full: true }
+    );
+    var endHint = APP.dom.el("p", "field-hint full",
+      "The day after this date, the category is archived automatically. Its transactions and history stay; it just leaves your category lists.");
+
+    function updateEndDate() {
+      endDate.root.style.display = temporary.checked ? "" : "none";
+      endHint.style.display = temporary.checked ? "" : "none";
+    }
+
+    temporary.addEventListener("change", updateEndDate);
+    updateEndDate();
+
     function updateGroupField() {
       newGroup.root.style.display =
         group.input.value === "__new_group__" ? "" : "none";
@@ -217,6 +236,8 @@
     goalHint.style.display = savings.checked ? "" : "none";
 
     form.appendChild(flags);
+    form.appendChild(endDate.root);
+    form.appendChild(endHint);
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -258,6 +279,7 @@
         isSavingsFund: savings.checked,
         isDebtCategory: debt.checked,
         isTemporary: temporary.checked,
+        endDate: temporary.checked ? endDate.input.value || "" : "",
         archived: existing ? existing.archived : false,
 
         openingBalance: savings.checked ?
@@ -322,9 +344,18 @@
   };
 
   APP.pages.categories.toggleArchive = function (categoryId) {
+    var today = APP.utils.isoDate(new Date());
+
     APP.state.categories.forEach(function (category) {
       if (category.id === categoryId) {
         category.archived = !category.archived;
+
+        // Restoring a temporary category whose end date has passed clears the date, or it
+        // would archive itself again straight away.
+        if (!category.archived && category.endDate && category.endDate < today) {
+          category.endDate = "";
+          APP.dom.toast(category.name + " is restored. Its end date had passed, so it was cleared; set a new one with Edit.", "info");
+        }
 
         APP.store.log(
           "info",
@@ -335,6 +366,56 @@
     });
 
     APP.controller.commit();
+  };
+
+  // Archives temporary categories whose end date has passed. Runs whenever the app loads or
+  // takes in synced changes (from normalizeState), so it happens on whichever device is
+  // opened first after the date. Returns the names archived.
+  APP.pages.categories.autoArchive = function () {
+    var today = APP.utils.isoDate(new Date());
+    var archived = [];
+
+    (APP.state.categories || []).forEach(function (category) {
+      if (category.isTemporary && category.endDate && !category.archived && category.endDate < today) {
+        category.archived = true;
+        archived.push(category.name);
+      }
+    });
+
+    if (archived.length) {
+      APP.store.log("info", "Archived temporary categories that ended: " + archived.join(", ") + ".");
+
+      if (APP.dom.toast) {
+        APP.dom.toast(
+          (archived.length === 1 ? archived[0] + " has" : archived.join(", ") + " have") +
+            " ended and moved to Archived categories in Settings.",
+          "info"
+        );
+      }
+    }
+
+    return archived;
+  };
+
+  // "Ends Dec 31" / "Ends today" / "Ended Nov 2", for a temporary category's end date.
+  APP.pages.categories.endLabel = function (category) {
+    if (!category.isTemporary || !category.endDate) {
+      return "";
+    }
+
+    var today = APP.utils.isoDate(new Date());
+    var date = APP.utils.parseDate(category.endDate);
+    var text = date ? date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric"
+    }) : category.endDate;
+
+    if (category.endDate === today) {
+      return "Ends today";
+    }
+
+    return (category.endDate < today ? "Ended " : "Ends ") + text;
   };
 
   // A category can be deleted only when nothing uses it: no transactions and no debts.
@@ -393,9 +474,103 @@
     APP.controller.commit();
   };
 
+  // Search text and filter for the Settings category list. Kept outside render() so they
+  // survive the re-render that follows every save.
+  APP.pages.categories.view = { query: "", kind: "all", archivedOpen: false };
+
+  APP.pages.categories.kinds = [
+    ["all", "All"],
+    ["spending", "Spending"],
+    ["savings", "Savings funds"],
+    ["debt", "Debt"],
+    ["temporary", "Temporary"]
+  ];
+
+  APP.pages.categories.matches = function (category) {
+    var view = APP.pages.categories.view;
+    var query = APP.utils.header(view.query);
+    var kind = view.kind;
+
+    if (kind === "spending" && (category.isSavingsFund || category.isDebtCategory)) {
+      return false;
+    }
+
+    if ((kind === "savings" && !category.isSavingsFund) ||
+        (kind === "debt" && !category.isDebtCategory) ||
+        (kind === "temporary" && !category.isTemporary)) {
+      return false;
+    }
+
+    return !query || APP.utils.header(category.name + " " + category.group).indexOf(query) !== -1;
+  };
+
+  APP.pages.categories.row = function (category) {
+    var card = APP.dom.el("div", "category-settings-row" + (category.archived ? " is-archived" : ""));
+    var nameCell = APP.dom.el("div", "category-settings-name");
+    var groupCell = APP.dom.el("div", "category-settings-group");
+    var detailsCell = APP.dom.el("div", "category-settings-details");
+    var actions = APP.dom.el("div", "category-settings-actions");
+    var edit = APP.ui.button("Edit");
+    var archive = APP.ui.button(category.archived ? "Restore" : "Archive");
+    var ends = APP.pages.categories.endLabel(category);
+
+    nameCell.appendChild(APP.dom.el("strong", "", category.name));
+
+    if (ends) {
+      nameCell.appendChild(APP.ui.pill(ends, category.archived ? "" : "pill-warn"));
+    }
+
+    groupCell.appendChild(APP.dom.el("span", "muted", category.group));
+
+    detailsCell.appendChild(APP.dom.el("span", "muted", [
+      category.isSavingsFund ? "Savings fund" : "",
+      category.isDebtCategory ? "Debt category" : "",
+      category.isTemporary ? "Temporary" : ""
+    ].filter(Boolean).join(" · ") || "Standard expense"));
+
+    if (category.isSavingsFund) {
+      detailsCell.appendChild(APP.dom.el("span", "muted",
+        category.eventualSavingsGoal > 0 ?
+          "Goal: " + APP.utils.currency(category.eventualSavingsGoal) :
+          "No eventual savings goal"));
+    }
+
+    edit.addEventListener("click", function () {
+      APP.pages.categories.openModal(category.id);
+    });
+
+    archive.addEventListener("click", function () {
+      APP.pages.categories.toggleArchive(category.id);
+    });
+
+    actions.appendChild(edit);
+    actions.appendChild(archive);
+
+    var usage = APP.pages.categories.usage(category.id);
+
+    if (!usage.transactions && !usage.debts) {
+      var remove = APP.ui.button("Delete", "button-quiet danger");
+
+      remove.addEventListener("click", function () {
+        APP.pages.categories.remove(category.id);
+      });
+      actions.appendChild(remove);
+    } else {
+      actions.title = "Used by " + (usage.transactions ?
+        usage.transactions + " transaction(s)" :
+        usage.debts + " debt(s)") + ", so it can be archived but not deleted.";
+    }
+
+    card.appendChild(nameCell);
+    card.appendChild(groupCell);
+    card.appendChild(detailsCell);
+    card.appendChild(actions);
+    return card;
+  };
+
   APP.pages.categories.render = function (hostElement) {
-  var root = hostElement || APP.dom.refs.pages.settings;
-    var controls = APP.dom.el("div", "button-row");
+    var root = hostElement || APP.dom.refs.pages.settings;
+    var view = APP.pages.categories.view;
     var add = APP.ui.button("+ Add category", "button-primary");
 
     APP.dom.clear(root);
@@ -404,100 +579,120 @@
       APP.pages.categories.openModal();
     });
 
-    controls.appendChild(add);
+    // Heading, search and filters stay pinned while the list scrolls under them.
+    var top = APP.dom.el("div", "category-sticky");
+    var toolbar = APP.dom.el("div", "category-toolbar");
+    var search = APP.dom.el("input", "filter-box category-search");
+    var chips = APP.dom.el("div", "category-chips");
 
-    root.appendChild(APP.ui.panelHeader(
-  "Categories",
-  "Manage categories, savings funds, debt categories, temporary categories, and organization groups. Categories with no transactions can be deleted; others can be archived.",
-  controls
-));
+    top.appendChild(APP.ui.panelHeader(
+      "Categories",
+      "Search, edit or archive categories. Archived ones keep their history and move to the bottom.",
+      add
+    ));
 
-    root.appendChild(APP.ui.filterBox("Find a category…", function () {
-      return Array.prototype.slice.call(root.querySelectorAll(".category-settings-row"));
-    }));
+    search.type = "search";
+    search.placeholder = "Search categories or groups";
+    search.setAttribute("aria-label", "Search categories");
+    search.value = view.query;
+    toolbar.appendChild(search);
 
-    APP.state.categories.slice().sort(function (a, b) {
-      return a.name.localeCompare(b.name);
-    }).forEach(function (category) {
-      var card = APP.dom.el("div", "category-settings-row");
-var nameCell = APP.dom.el("div", "category-settings-name");
-var groupCell = APP.dom.el("div", "category-settings-group");
-var detailsCell = APP.dom.el("div", "category-settings-details");
-var statusCell = APP.dom.el("div", "category-settings-status");
-var actions = APP.dom.el("div", "category-settings-actions");
+    APP.pages.categories.kinds.forEach(function (kind) {
+      var chip = APP.dom.el("button", "category-chip" + (view.kind === kind[0] ? " active" : ""), kind[1]);
 
-var edit = APP.ui.button("Edit");
-var archive = APP.ui.button(
-  category.archived ? "Restore" : "Archive"
-);
-
-nameCell.appendChild(APP.dom.el("strong", "", category.name));
-
-groupCell.appendChild(APP.dom.el(
-  "span",
-  "muted",
-  category.group
-));
-
-detailsCell.appendChild(APP.dom.el(
-  "span",
-  "muted",
-  [
-    category.isSavingsFund ? "Savings fund" : "",
-    category.isDebtCategory ? "Debt category" : "",
-    category.isTemporary ? "Temporary" : ""
-  ].filter(Boolean).join(" · ") || "Standard expense"
-));
-
-if (category.isSavingsFund) {
-  detailsCell.appendChild(APP.dom.el(
-    "span",
-    "muted",
-    category.eventualSavingsGoal > 0 ?
-      "Goal: " + APP.utils.currency(category.eventualSavingsGoal) :
-      "No eventual savings goal"
-  ));
-}
-
-statusCell.appendChild(APP.dom.el(
-  "span",
-  category.archived ? "danger" : "success",
-  category.archived ? "Archived" : "Active"
-));
-
-edit.addEventListener("click", function () {
-  APP.pages.categories.openModal(category.id);
-});
-
-archive.addEventListener("click", function () {
-  APP.pages.categories.toggleArchive(category.id);
-});
-
-actions.appendChild(edit);
-actions.appendChild(archive);
-
-var usage = APP.pages.categories.usage(category.id);
-
-if (!usage.transactions && !usage.debts) {
-  var remove = APP.ui.button("Delete", "button-quiet danger");
-
-  remove.addEventListener("click", function () {
-    APP.pages.categories.remove(category.id);
-  });
-  actions.appendChild(remove);
-} else {
-  actions.title = "Used by " + (usage.transactions ?
-    usage.transactions + " transaction(s)" :
-    usage.debts + " debt(s)") + ", so it can be archived but not deleted.";
-}
-
-card.appendChild(nameCell);
-card.appendChild(groupCell);
-card.appendChild(detailsCell);
-card.appendChild(statusCell);
-card.appendChild(actions);
-
-root.appendChild(card);
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", view.kind === kind[0] ? "true" : "false");
+      chip.addEventListener("click", function () {
+        view.kind = kind[0];
+        Array.prototype.slice.call(chips.children).forEach(function (item) {
+          var on = item === chip;
+          item.classList.toggle("active", on);
+          item.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        paint();
+      });
+      chips.appendChild(chip);
     });
+
+    toolbar.appendChild(chips);
+    top.appendChild(toolbar);
+    root.appendChild(top);
+
+    var list = APP.dom.el("div", "category-list");
+    root.appendChild(list);
+
+    // Redraws only the list, so typing in the search box keeps focus.
+    function paint() {
+      var sorted = APP.state.categories.slice().sort(function (a, b) {
+        return a.name.localeCompare(b.name);
+      });
+      var active = sorted.filter(function (category) { return !category.archived; });
+      var archived = sorted.filter(function (category) { return category.archived; });
+      var shownActive = active.filter(APP.pages.categories.matches);
+      var shownArchived = archived.filter(APP.pages.categories.matches);
+      var filtering = Boolean(APP.utils.text(view.query)) || view.kind !== "all";
+
+      APP.dom.clear(list);
+
+      list.appendChild(APP.dom.el("p", "category-count",
+        filtering ?
+          "Showing " + shownActive.length + " of " + active.length + " active categories" :
+          active.length + " active categories"));
+
+      if (!shownActive.length) {
+        list.appendChild(APP.dom.el("p", "category-empty",
+          active.length ? "No active categories match." : "No active categories yet."));
+      }
+
+      // Grouped under their group names, groups in alphabetical order.
+      var groups = {};
+
+      shownActive.forEach(function (category) {
+        (groups[category.group] = groups[category.group] || []).push(category);
+      });
+
+      Object.keys(groups).sort().forEach(function (name) {
+        var section = APP.dom.el("div", "category-group");
+
+        section.appendChild(APP.dom.el("h3", "category-group-title", name + " · " + groups[name].length));
+        groups[name].forEach(function (category) {
+          section.appendChild(APP.pages.categories.row(category));
+        });
+        list.appendChild(section);
+      });
+
+      if (archived.length) {
+        var box = APP.dom.el("details", "category-archived");
+        var summary = APP.dom.el("summary", "",
+          "Archived categories (" + (filtering ? shownArchived.length + " of " : "") + archived.length + ")");
+
+        // Opens by itself when a search finds only archived categories.
+        box.open = view.archivedOpen || (filtering && !shownActive.length && shownArchived.length > 0);
+        box.addEventListener("toggle", function () {
+          view.archivedOpen = box.open;
+        });
+
+        box.appendChild(summary);
+        box.appendChild(APP.dom.el("p", "muted category-archived-note",
+          "Archived categories are hidden from your lists and pickers, but their transactions and history stay. Restore one to use it again."));
+
+        if (!shownArchived.length) {
+          box.appendChild(APP.dom.el("p", "category-empty", "No archived categories match."));
+        }
+
+        shownArchived.forEach(function (category) {
+          box.appendChild(APP.pages.categories.row(category));
+        });
+
+        list.appendChild(box);
+      }
+    }
+
+    search.addEventListener("input", function () {
+      view.query = search.value;
+      paint();
+    });
+
+    paint();
   };
 }());

@@ -1532,3 +1532,46 @@ body.tour-open{overflow:hidden}
   .topbar>div:not(.topbar-actions){padding-right:52px}
   .help-button{position:absolute;top:0;right:0;min-height:42px;width:42px}
 }
+/* ---- Settings: categories */
+/* The box's own top padding left a strip above the pinned header where rows showed
+   through; the header and toolbar carry their own padding instead. */
+.settings-category-section{padding:0 4px 12px 0}
+.settings-category-section>.category-sticky{position:sticky;top:0;z-index:8;border-bottom:1px solid var(--border);background:var(--surface)}
+.category-sticky>.panel-heading{margin:0;padding:18px 18px 12px;border:0}
+.category-toolbar{display:grid;gap:10px;padding:0 18px 14px}
+.category-search{width:100%;min-height:40px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;color:var(--text);background:var(--surface2)}
+.category-chips{display:flex;flex-wrap:wrap;gap:6px}
+.category-chip{min-height:32px;padding:4px 12px;border:1px solid var(--border);border-radius:99px;background:transparent;color:var(--muted);font-size:.8rem;font-weight:700}
+.category-chip.active{border-color:var(--blue);background:var(--tint-info);color:var(--info-text)}
+.category-list{display:grid;gap:4px;padding:6px 14px 0 18px}
+.category-count{margin:6px 0 0;color:var(--muted);font-size:.8rem}
+.category-empty{margin:8px 0;padding:14px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);text-align:center;font-size:.86rem}
+.category-group-title{margin:14px 0 0;padding-bottom:6px;border-bottom:1px solid var(--border);color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.settings-category-section .category-list .category-settings-row{margin:0;grid-template-columns:minmax(150px,1.3fr) minmax(130px,1fr) minmax(190px,1.5fr) auto}
+.category-settings-name{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pill-warn{background:var(--tint-warn);color:var(--warn-text)}
+.category-archived{margin-top:16px;border:1px solid var(--border);border-radius:12px;background:var(--surface-sunken)}
+.category-archived summary{padding:12px 14px;cursor:pointer;color:var(--text-soft);font-weight:700}
+.category-archived[open] summary{border-bottom:1px solid var(--border)}
+.category-archived-note{margin:10px 14px 0;font-size:.8rem}
+.category-archived .category-settings-row,.category-archived .category-empty{margin:0 14px}
+.category-archived .category-settings-row:last-child{border-bottom:0}
+.category-settings-row.is-archived strong{color:var(--text-soft)}
+@media(max-width:900px){
+  .settings-category-section .category-list .category-settings-row{grid-template-columns:1fr 1fr}
+}
+@media(max-width:560px){
+  .settings-category-section .category-list .category-settings-row{grid-template-columns:1fr;gap:6px}
+  .category-toolbar{padding:0 14px 12px}
+  .category-sticky>.panel-heading{padding:14px 14px 10px}
+  .category-list{padding:4px 10px 0 14px}
+  .category-chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .category-chip{flex:0 0 auto}
+}@media(max-width:560px){
+  /* More list, less header: the description hides and the box can use most of the screen. */
+  .settings-category-section{max-height:min(680px,78vh)}
+  .category-sticky>.panel-heading{flex-wrap:nowrap;align-items:center;margin:0}
+  .category-sticky>.panel-heading p{display:none}
+  .category-sticky>.panel-heading .button{min-height:36px;padding:6px 12px;white-space:nowrap}
+  .category-toolbar{gap:8px}
+}
